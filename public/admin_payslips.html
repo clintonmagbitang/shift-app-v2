@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Admin Payslips</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+<style>
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: #f4f6f8;
+}
+
+.container {
+  max-width: 900px;
+  margin: auto;
+  padding: 20px;
+}
+
+h1 {
+  margin-top: 0;
+}
+
+.card {
+  background: white;
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+label {
+  display: block;
+  font-size: 13px;
+  margin-top: 10px;
+}
+
+select, input[type="file"], button {
+  width: 100%;
+  padding: 8px;
+  margin-top: 4px;
+}
+
+button {
+  background: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-top: 12px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+}
+
+th, td {
+  border: 1px solid #e5e7eb;
+  padding: 8px;
+  font-size: 14px;
+}
+
+th {
+  background: #f1f5f9;
+  text-align: left;
+}
+
+.download {
+  color: #2563eb;
+  cursor: pointer;
+  text-decoration: underline;
+}
+</style>
+</head>
+
+<body>
+
+<!-- nav.js sets window.user and authHeaders() -->
+<script src="/nav.js"></script>
+
+<div class="container">
+
+  <h1>📄 Payslip Management</h1>
+
+  <div class="card">
+    <label>Employee</label>
+    <select id="employeeSelect">
+      <option value="">Select employee</option>
+    </select>
+
+    <label>Payslip File (JPEG / PNG / PDF)</label>
+    <input type="file" id="file" accept=".jpg,.jpeg,.png,.pdf">
+
+    <button onclick="uploadPayslip()">Upload Payslip</button>
+  </div>
+
+  <div class="card">
+    <h3>Payslips</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Filename</th>
+          <th>Uploaded</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="payslipRows">
+        <tr><td colspan="3">Select an employee</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<script>
+/* =====================
+   AUTH GUARD (ADMIN ONLY)
+===================== */
+if (!window.user || window.user.role !== "admin") {
+  location.href = "/login.html";
+}
+
+const employeeSelect = document.getElementById("employeeSelect");
+const rows = document.getElementById("payslipRows");
+
+/* =====================
+   LOAD EMPLOYEES
+===================== */
+async function loadEmployees() {
+  const res = await fetch("/employees", {
+    headers: authHeaders()
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  const data = await res.json();
+
+  data.forEach(e => {
+    const opt = document.createElement("option");
+    opt.value = e.id;
+    opt.textContent = `${e.name} (${e.employee_id || "—"})`;
+    employeeSelect.appendChild(opt);
+  });
+}
+
+employeeSelect.onchange = loadPayslips;
+
+/* =====================
+   LOAD PAYSLIPS
+   NOTE: backend /payslips returns payslips for the *logged-in* user.
+   To keep it working with the current API, this view will show
+   the selected employee’s payslips only if that employee is the
+   one currently logged in. The upload still targets the selected
+   employee correctly.
+===================== */
+async function loadPayslips() {
+  const employeeId = employeeSelect.value;
+  rows.innerHTML = "";
+
+  if (!employeeId) {
+    rows.innerHTML = `<tr><td colspan="3">Select an employee</td></tr>`;
+    return;
+  }
+
+  const res = await fetch(`/payslips?user_id=${employeeId}`, {
+    headers: authHeaders()
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  const data = await res.json();
+
+  if (!Array.isArray(data) || !data.length) {
+    rows.innerHTML = `<tr><td colspan="3">No payslips uploaded</td></tr>`;
+    return;
+  }
+
+  data.forEach(p => {
+    const tr = document.createElement("tr");
+    const safeName = (p.original_name || "").replace(/'/g, "\\'");
+    tr.innerHTML = `
+      <td>${p.original_name}</td>
+      <td>${new Date(p.created_at).toLocaleString()}</td>
+      <td>
+        <span class="download"
+          onclick="downloadPayslip(${p.id}, '${safeName}')">
+          Download
+        </span>
+      </td>
+    `;
+    rows.appendChild(tr);
+  });
+}
+
+/* =====================
+   UPLOAD PAYSLIP
+===================== */
+async function uploadPayslip() {
+  const employeeId = employeeSelect.value;
+  const fileInput = document.getElementById("file");
+
+  if (!employeeId) {
+    alert("Select an employee");
+    return;
+  }
+
+  if (!fileInput.files.length) {
+    alert("Select a file");
+    return;
+  }
+
+  const form = new FormData();
+  form.append("employee_id", employeeId);
+  form.append("file", fileInput.files[0]);
+
+  const res = await fetch("/admin/payslips/upload", {
+    method: "POST",
+    headers: authHeaders(), // only Authorization; Content-Type is set by browser
+    body: form
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  if (!res.ok) {
+    alert("Upload failed");
+    return;
+  }
+
+  fileInput.value = "";
+  loadPayslips();
+}
+
+/* =====================
+   DOWNLOAD (via fetch + blob)
+===================== */
+async function downloadPayslip(id, originalName) {
+  const res = await fetch(`/payslips/${id}/download`, {
+    headers: authHeaders()
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  if (!res.ok) {
+    alert("Download failed");
+    return;
+  }
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = originalName || `payslip_${id}`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/* =====================
+   INIT
+===================== */
+loadEmployees();
+</script>
+
+</body>
+</html>

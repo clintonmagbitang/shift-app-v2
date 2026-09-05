@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Admin – Shift Approvals</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: #f4f6f8;
+    }
+
+    .container {
+      padding: 20px;
+      max-width: 1200px;
+      margin: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+    }
+
+    th, td {
+      border: 1px solid #e5e7eb;
+      padding: 8px;
+      vertical-align: top;
+      font-size: 13px;
+    }
+
+    th {
+      background: #f1f5f9;
+      text-align: center;
+      font-weight: 600;
+    }
+
+    td:first-child {
+      font-weight: 600;
+      background: #fafafa;
+      width: 180px;
+    }
+
+    .shift {
+      margin-bottom: 6px;
+      padding: 6px;
+      border-radius: 6px;
+      background: #f8fafc;
+      font-size: 12px;
+    }
+
+    .pending { border-left: 4px solid #f59e0b; }
+    .approved { border-left: 4px solid #22c55e; }
+    .cancel { border-left: 4px solid #92400e; }
+
+    button {
+      margin-top: 4px;
+      margin-right: 4px;
+      padding: 4px 8px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+    }
+
+    .approve { background: #22c55e; color: white; }
+    .reject  { background: #ef4444; color: white; }
+  </style>
+</head>
+<body>
+
+<!-- WEEK NAV -->
+<div style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
+  <button id="prevWeek">◀ Prev</button>
+  <input type="date" id="weekPicker">
+  <button id="nextWeek">Next ▶</button>
+</div>
+
+<!-- FILTERS -->
+<div style="margin-bottom:12px;">
+  <strong>Filter employees:</strong>
+  <div id="employeeFilters"
+       style="margin-top:6px; display:flex; flex-wrap:wrap; gap:12px;">
+  </div>
+</div>
+
+<div class="container">
+  <button
+    onclick="batchApprove()"
+    style="margin-bottom:10px; padding:6px 12px;"
+  >
+    Approve Selected
+  </button>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Employee</th>
+        <th>Mon</th>
+        <th>Tue</th>
+        <th>Wed</th>
+        <th>Thu</th>
+        <th>Fri</th>
+        <th>Sat</th>
+        <th>Sun</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+
+<script src="/nav.js"></script>
+
+<script>
+/* =====================
+   AUTH GUARD (uses nav.js)
+===================== */
+if (!window.user || window.user.role !== "admin") {
+  window.location.href = "/login.html";
+}
+
+/* =====================
+   STATE
+===================== */
+let allEmployees = {};
+let visibleEmployees = new Set();
+
+/* =====================
+   DATE HELPERS
+===================== */
+function getMonday(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
+function toLocalISO(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function shiftWeek(days) {
+  const d = new Date(weekPicker.value + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  weekPicker.value = toLocalISO(d);
+  loadClaims();
+}
+
+/* =====================
+   LOAD CLAIMS
+===================== */
+async function loadClaims() {
+  const tbody = document.getElementById("rows");
+  tbody.innerHTML = "";
+
+  const monday = getMonday(weekPicker.value);
+
+  const res = await fetch(
+    `/admin/shift-claims?week=${toLocalISO(monday)}`,
+    { headers: window.authHeaders() }
+  );
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      localStorage.removeItem("user");
+      window.location.href = "/login.html";
+      return;
+    }
+    const txt = await res.text();
+    console.error("shift-claims error:", res.status, txt);
+    alert("Failed to load approvals. Check server logs.");
+    return;
+  }
+
+  const data = await res.json();
+
+  // Auto-sync week picker once
+  if (data.length && !loadClaims._synced) {
+    const firstLocal = toLocalISO(new Date(data[0].shift_date));
+    weekPicker.value = toLocalISO(getMonday(firstLocal));
+    loadClaims._synced = true;
+    return loadClaims();
+  }
+
+  const employees = {};
+
+  data.forEach(c => {
+    const dayKey = toLocalISO(new Date(c.shift_date));
+
+    employees[c.employee_id] ??= {
+      name: c.employee_name,
+      days: {}
+    };
+
+    employees[c.employee_id].days[dayKey] ??= [];
+    employees[c.employee_id].days[dayKey].push(c);
+  });
+
+  allEmployees = employees;
+
+  // Sync visible employees with current set
+  visibleEmployees = new Set(
+    Object.keys(allEmployees).map(id => Number(id))
+  );
+  renderEmployeeFilters();
+
+  Object.entries(allEmployees)
+    .filter(([id]) => visibleEmployees.has(Number(id)))
+    .forEach(([_, emp]) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${emp.name}</td>`;
+
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(monday);
+        d.setDate(monday.getDate() + i);
+        const dayKey = toLocalISO(d);
+
+        const td = document.createElement("td");
+        const claims = emp.days[dayKey] || [];
+
+        claims.forEach(c => {
+          const div = document.createElement("div");
+          div.className =
+            `shift ${c.cancellation_status === "requested" ? "cancel" : c.status}`;
+
+          div.innerHTML = `
+            <div><strong>${c.start_time} – ${c.end_time}</strong></div>
+            <div>Status: ${
+              c.cancellation_status === "requested"
+                ? "Cancellation Requested"
+                : c.status
+            }</div>
+          `;
+
+          if (c.cancellation_status === "requested") {
+            // Cancellation request
+            div.innerHTML += `
+              <button class="approve" onclick="approveCancel(${c.assignment_id})">Approve Cancel</button>
+              <button class="reject" onclick="rejectCancel(${c.assignment_id})">Reject Cancel</button>
+            `;
+          } else if (c.status === "pending") {
+            // Pending approval
+            div.innerHTML += `
+              <label>
+                <input type="checkbox" class="batch-checkbox" value="${c.assignment_id}">
+                Select
+              </label>
+              <button class="approve" onclick="approve(${c.assignment_id})">Approve</button>
+              <button class="reject" onclick="reject(${c.assignment_id})">Reject</button>
+            `;
+          }
+
+          td.appendChild(div);
+        });
+
+        tr.appendChild(td);
+      }
+
+      tbody.appendChild(tr);
+    });
+}
+
+/* =====================
+   ACTIONS
+===================== */
+async function approve(id) {
+  const res = await fetch("/admin/approve-shift", {
+    method: "POST",
+    headers: window.authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ assignment_id: id })
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    window.location.href = "/login.html";
+    return;
+  }
+
+  loadClaims();
+}
+
+async function reject(id) {
+  const res = await fetch("/admin/reject-shift", {
+    method: "POST",
+    headers: window.authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ assignment_id: id })
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    window.location.href = "/login.html";
+    return;
+  }
+
+  loadClaims();
+}
+
+async function batchApprove() {
+  const ids = [...document.querySelectorAll(".batch-checkbox:checked")]
+    .map(cb => Number(cb.value));
+
+  if (!ids.length) {
+    alert("No shifts selected");
+    return;
+  }
+
+  const res = await fetch("/admin/approve-shifts-batch", {
+    method: "POST",
+    headers: window.authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ assignment_ids: ids })
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    window.location.href = "/login.html";
+    return;
+  }
+
+  loadClaims();
+}
+
+async function approveCancel(id) {
+  const res = await fetch("/admin/approve-cancel", {
+    method: "POST",
+    headers: window.authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ assignment_id: id })
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    window.location.href = "/login.html";
+    return;
+  }
+
+  loadClaims();
+}
+
+async function rejectCancel(id) {
+  const res = await fetch("/admin/reject-cancel", {
+    method: "POST",
+    headers: window.authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ assignment_id: id })
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    window.location.href = "/login.html";
+    return;
+  }
+
+  loadClaims();
+}
+
+/* =====================
+   FILTERS
+===================== */
+function renderEmployeeFilters() {
+  const box = document.getElementById("employeeFilters");
+  box.innerHTML = "";
+
+  Object.entries(allEmployees).forEach(([id, emp]) => {
+    const label = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = visibleEmployees.has(Number(id));
+    cb.onchange = () => {
+      cb.checked ? visibleEmployees.add(+id) : visibleEmployees.delete(+id);
+      loadClaims();
+    };
+    label.append(cb, " ", emp.name);
+    box.appendChild(label);
+  });
+}
+
+/* =====================
+   INIT
+===================== */
+weekPicker.value = toLocalISO(new Date());
+weekPicker.onchange = loadClaims;
+prevWeek.onclick = () => shiftWeek(-7);
+nextWeek.onclick = () => shiftWeek(7);
+loadClaims();
+</script>
+
+</body>
+</html>

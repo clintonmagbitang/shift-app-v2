@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Admin – Timesheets</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: #f4f6f8;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 30px auto;
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    }
+
+    h1 {
+      margin-top: 0;
+      font-size: 22px;
+    }
+
+    .filters {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    label {
+      font-size: 13px;
+    }
+
+    select, button {
+      padding: 8px 12px;
+      font-size: 14px;
+    }
+
+    button {
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+    }
+
+    th, td {
+      border: 1px solid #e5e7eb;
+      padding: 8px;
+      font-size: 13px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f1f5f9;
+      font-weight: 600;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 20px;
+      color: #6b7280;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+
+<script src="/nav.js"></script>
+
+<div class="container">
+  <h1>Timesheets (Admin)</h1>
+
+    <div class="filters">
+  <label>
+    Cutoff
+    <select id="cutoffSelect"></select>
+  </label>
+
+  <label>
+    Employee
+    <select id="employeeFilter">
+      <option value="">All employees</option>
+    </select>
+  </label>
+
+  <button onclick="loadTimesheets()">Load</button>
+  <button onclick="downloadCSV()">Download CSV</button>
+  <button onclick="lockCutoff()">Lock Cutoff</button>
+  <button onclick="unlockCutoff()">Unlock Cutoff</button>
+
+  <span id="finalizedBadge" style="font-size:12px;font-weight:600;margin-left:8px;"></span>
+</div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Employee ID</th>
+        <th>Name</th>
+        <th>Date</th>
+
+        <th>Actual In</th>
+        <th>Actual Out</th>
+
+        <th>Rounded In</th>
+        <th>Rounded Out</th>
+
+        <th>Payroll In</th>
+        <th>Payroll Out</th>
+
+        <th>Attendance</th>
+        <th>OT Hours</th>
+        <th>OT Status / Action</th>
+        <th>Locked</th>
+        <th>Remarks</th>
+      </tr>
+    </thead>
+
+    <tbody id="rows">
+      <tr>
+        <td colspan="14" class="empty">Select a cutoff and load</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+/* =====================
+   AUTH
+===================== */
+if (!window.user || window.user.role !== "admin") {
+  location.href = "/login.html";
+}
+
+/* =====================
+   UI HELPERS
+===================== */
+function badge(text, bg, color) {
+  return `<span class="badge" style="background:${bg};color:${color};">${text}</span>`;
+}
+
+function renderLocked(r) {
+  return r.locked
+    ? badge("LOCKED", "#e5e7eb", "#111827")
+    : badge("OPEN", "#dbeafe", "#1e3a8a");
+}
+
+function renderAttendance(r) {
+  const full = (r.attendance_full || "").trim();
+  if (!full) return "";
+  if (full.toLowerCase() === "absent") {
+    return badge("ABSENT", "#fee2e2", "#991b1b");
+  }
+  return full; // e.g. "Late in Early out - Overtime"
+}
+
+/*
+   OT column behaviour:
+   - No OT hours: show NONE
+   - Pending OT: show pending badge + Approve/Reject buttons
+   - Approved: badge "APPROVED Xh"
+   - Rejected: show ONLY the rejection reason text
+*/
+function renderOTCell(r) {
+  const status = (r.overtime_status || "none").toLowerCase();
+  const hours = r.overtime_hours || 0;
+  const hoursText = hours ? `${hours}h` : "";
+
+  // No OT claimed at all
+  if (!r.overtime_hours) {
+    if (status === "rejected" && r.overtime_rejection_reason) {
+      const reason = (r.overtime_rejection_reason || "").replace(/\n/g, "<br>");
+      return `<div style="font-size:12px;color:#4b5563;">${reason}</div>`;
+    }
+    return badge("NONE", "#e5e7eb", "#374151");
+  }
+
+  // Approved
+  if (status === "approved") {
+    return badge(`APPROVED ${hoursText}`, "#dcfce7", "#166534");
+  }
+
+  // Rejected: show reason only
+  if (status === "rejected") {
+    const reason = (r.overtime_rejection_reason || "").replace(/\n/g, "<br>");
+    return `<div style="font-size:12px;color:#4b5563;">${reason}</div>`;
+  }
+
+  // Pending: show badge + action buttons
+  return `
+    <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">
+      ${badge(`PENDING ${hoursText}`, "#fef9c3", "#854d0e")}
+      <div>
+        <button
+          type="button"
+          style="background:#16a34a;color:white;margin-right:4px;"
+          onclick="approveOT(${r.id}, ${hours})"
+        >
+          Approve
+        </button>
+        <button
+          type="button"
+          style="background:#dc2626;color:white;"
+          onclick="rejectOT(${r.id}, ${hours})"
+        >
+          Reject
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+/* =====================
+   CUTOFF SELECT
+===================== */
+function toISO(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function buildCutoffOptions() {
+  const sel = document.getElementById("cutoffSelect");
+  sel.innerHTML = "";
+
+  const today = new Date();
+  const monthsBack = 3;
+  const monthsAhead = 1;
+  const options = [];
+
+  for (let offset = -monthsBack; offset <= monthsAhead; offset++) {
+    const base = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+    const y = base.getFullYear();
+    const m = base.getMonth();
+
+    const first = new Date(y, m, 1);
+    const fifteenth = new Date(y, m, 15);
+    const sixteenth = new Date(y, m, 16);
+    const last = new Date(y, m + 1, 0);
+
+    options.push({
+      label: `${first.toLocaleString(undefined, { month: "short" })} 1–15 ${y}`,
+      from: toISO(first),
+      to: toISO(fifteenth)
+    });
+
+    options.push({
+      label: `${sixteenth.toLocaleString(undefined, { month: "short" })} 16–${last.getDate()} ${y}`,
+      from: toISO(sixteenth),
+      to: toISO(last)
+    });
+  }
+
+  let selectedIndex = 0;
+  const todayISO = toISO(today);
+
+  options.forEach((c, idx) => {
+    const o = document.createElement("option");
+    o.value = `${c.from}|${c.to}`;
+    o.textContent = c.label;
+    sel.appendChild(o);
+
+    if (todayISO >= c.from && todayISO <= c.to) {
+      selectedIndex = idx;
+    }
+  });
+
+  sel.selectedIndex = selectedIndex;
+}
+
+function getSelectedCutoffRange() {
+  const sel = document.getElementById("cutoffSelect");
+  if (!sel.value) return null;
+  const [from, to] = sel.value.split("|");
+  return { from, to };
+}
+
+// Count number of days in a cutoff (inclusive)
+function countDaysInclusive(from, to) {
+  const start = new Date(from + "T00:00:00");
+  const end   = new Date(to   + "T00:00:00");
+  const diffMs = end - start;
+  return Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+}
+
+// Update the "FINALIZED / NOT FINALIZED" badge for a single employee
+function updateFinalizedBadge(data, from, to, employeeId) {
+  const badgeEl = document.getElementById("finalizedBadge");
+  if (!badgeEl) return;
+
+  // Only show badge when a specific employee is selected
+  if (!employeeId) {
+    badgeEl.textContent = "";
+    badgeEl.style.background = "transparent";
+    return;
+  }
+
+  if (!Array.isArray(data) || data.length === 0) {
+    badgeEl.textContent = "NOT FINALIZED";
+    badgeEl.style.background = "#fee2e2";
+    badgeEl.style.color = "#b91c1c";
+    badgeEl.style.padding = "4px 8px";
+    badgeEl.style.borderRadius = "999px";
+    return;
+  }
+
+  const totalDays = countDaysInclusive(from, to);
+  const uniqueDays = new Set(data.map(r => r.work_date));
+  const allLocked = data.every(r => r.locked);
+
+  const hasFullCoverage = uniqueDays.size === totalDays;
+
+  if (allLocked && hasFullCoverage) {
+    badgeEl.textContent = "FINALIZED";
+    badgeEl.style.background = "#22c55e";
+    badgeEl.style.color = "#ffffff";
+    badgeEl.style.padding = "4px 8px";
+    badgeEl.style.borderRadius = "999px";
+  } else {
+    badgeEl.textContent = "NOT FINALIZED";
+    badgeEl.style.background = "#fee2e2";
+    badgeEl.style.color = "#b91c1c";
+    badgeEl.style.padding = "4px 8px";
+    badgeEl.style.borderRadius = "999px";
+  }
+}
+
+async function lockCutoff() {
+  const range = getSelectedCutoffRange();
+  if (!range) {
+    alert("Select a cutoff first.");
+    return;
+  }
+  const { from, to } = range;
+  const employeeId = document.getElementById("employeeFilter").value || null;
+
+  const confirmMsg = employeeId
+    ? `Lock timesheets for this employee from ${from} to ${to}?`
+    : `Lock timesheets for ALL employees from ${from} to ${to}?`;
+
+  if (!confirm(confirmMsg)) return;
+
+  const res = await fetch("/admin/lock-timesheets", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ from, to, user_id: employeeId })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert(data.error || "Failed to lock timesheets.");
+    return;
+  }
+
+  alert("Timesheets locked.");
+  loadTimesheets();
+}
+
+async function unlockCutoff() {
+  const range = getSelectedCutoffRange();
+  if (!range) {
+    alert("Select a cutoff first.");
+    return;
+  }
+  const { from, to } = range;
+  const employeeId = document.getElementById("employeeFilter").value || null;
+
+  const confirmMsg = employeeId
+    ? `UNLOCK timesheets for this employee from ${from} to ${to}?`
+    : `UNLOCK timesheets for ALL employees from ${from} to ${to}?`;
+
+  if (!confirm(confirmMsg)) return;
+
+  const res = await fetch("/admin/unlock-timesheets", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ from, to, user_id: employeeId })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert(data.error || "Failed to unlock timesheets.");
+    return;
+  }
+
+  alert("Timesheets unlocked.");
+  loadTimesheets();
+}
+
+/* =====================
+   EMPLOYEE FILTER OPTIONS
+===================== */
+async function loadEmployeeFilter() {
+  const sel = document.getElementById("employeeFilter");
+  sel.innerHTML = `<option value="">All employees</option>`;
+
+  const res = await fetch("/employees", { headers: authHeaders() });
+  if (!res.ok) return;
+
+  const data = await res.json();
+  data.forEach(e => {
+    const opt = document.createElement("option");
+    opt.value = e.id;
+    opt.textContent = `${e.name} (${e.employee_id || "—"})`;
+    sel.appendChild(opt);
+  });
+}
+
+/* =====================
+   LOAD TIMESHEETS
+===================== */
+async function loadTimesheets() {
+  const range = getSelectedCutoffRange();
+  if (!range) {
+    alert("Select a cutoff");
+    return;
+  }
+  const { from, to } = range;
+
+  const employeeId = document.getElementById("employeeFilter").value;
+  const tbody = document.getElementById("rows");
+  tbody.innerHTML = "";
+
+  const params = new URLSearchParams({ from, to });
+  if (employeeId) params.set("user_id", employeeId);
+
+  const res = await fetch(`/admin/timesheets?${params.toString()}`, {
+    headers: authHeaders()
+  });
+
+  if (!res.ok) {
+    const txt = await res.text();
+    console.error("ADMIN TIMESHEETS ERROR", res.status, txt);
+    tbody.innerHTML = `<tr><td colspan="14" class="empty">Failed to load timesheets</td></tr>`;
+    // also clear badge on error
+    updateFinalizedBadge([], from, to, employeeId);
+    return;
+  }
+
+  const data = await res.json();
+
+  // 🔹 NEW: update the finalized badge for this employee + cutoff
+  updateFinalizedBadge(data, from, to, employeeId);
+
+  if (!Array.isArray(data) || data.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="14" class="empty">No records found</td></tr>`;
+    return;
+  }
+
+  data.forEach(r => {
+    const tr = document.createElement("tr");
+    tr.dataset.timesheetId = r.id;
+
+    const remarks = (r.remarks || "").replace(/\n/g, "<br>");
+
+    tr.innerHTML = `
+      <td>${r.employee_id || ""}</td>
+      <td>${r.name || ""}</td>
+      <td>${r.work_date || ""}</td>
+
+      <td>${r.time_in || ""}</td>
+      <td>${r.time_out || ""}</td>
+
+      <td>${r.rounded_in || ""}</td>
+      <td>${r.rounded_out || ""}</td>
+
+      <td>${r.payroll_in ?? ""}</td>
+      <td>${r.payroll_out ?? ""}</td>
+
+      <td>${renderAttendance(r)}</td>
+      <td>${r.overtime_hours ?? ""}</td>
+
+      <td class="ot-cell">${renderOTCell(r)}</td>
+      <td>${renderLocked(r)}</td>
+
+      <td>${remarks}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+/* =====================
+   OT ACTIONS – in-place update, no full reload
+===================== */
+function updateOTCellLocally(timesheetId, html) {
+  const row = document.querySelector(`tr[data-timesheet-id="${timesheetId}"]`);
+  if (!row) return;
+  const cell = row.querySelector(".ot-cell");
+  if (!cell) return;
+  cell.innerHTML = html;
+}
+
+async function approveOT(timesheetId, hours) {
+  if (!confirm("Approve OT for this timesheet?")) return;
+
+  const res = await fetch(`/admin/timesheets/${timesheetId}/approve-ot`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ user_id: window.user.id })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert(data.error || "Failed to approve OT");
+    return;
+  }
+
+  // ✅ update OT cell only, keep scroll where it is
+  const hoursText = hours ? `${hours}h` : "";
+  updateOTCellLocally(
+    timesheetId,
+    badge(`APPROVED ${hoursText}`, "#dcfce7", "#166534")
+  );
+}
+
+async function rejectOT(timesheetId, hours) {
+  const reason = prompt("Reason for OT rejection? (min 3 characters)");
+  if (!reason || reason.trim().length < 3) {
+    alert("Reason required.");
+    return;
+  }
+
+  if (!confirm("Reject OT for this timesheet?")) return;
+
+  const res = await fetch(`/admin/timesheets/${timesheetId}/reject-ot`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ user_id: window.user.id, reason: reason.trim() })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert(data.error || "Failed to reject OT");
+    return;
+  }
+
+  // ✅ show only the rejection reason
+  const safeReason = reason.trim().replace(/\n/g, "<br>");
+  updateOTCellLocally(
+    timesheetId,
+    `<div style="font-size:12px;color:#4b5563;">${safeReason}</div>`
+  );
+}
+
+/* =====================
+   CSV DOWNLOAD
+===================== */
+function downloadCSV() {
+  const range = getSelectedCutoffRange();
+  if (!range) {
+    alert("Select a cutoff");
+    return;
+  }
+  const { from, to } = range;
+  const employeeId = document.getElementById("employeeFilter").value;
+
+  const params = new URLSearchParams({ from, to });
+  if (employeeId) params.set("user_id", employeeId);
+
+  window.location.href = `/timesheets.csv?${params.toString()}`;
+}
+
+/* =====================
+   INIT
+===================== */
+buildCutoffOptions();
+loadEmployeeFilter();
+</script>
+
+</body>
+</html>

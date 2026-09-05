@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Employee Profile</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: #f4f6f8;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 30px auto;
+      padding: 20px;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    }
+
+    h2, h3 {
+      margin-top: 0;
+    }
+
+    label {
+      font-weight: 600;
+      display: block;
+      margin-top: 14px;
+    }
+
+    input, select {
+      width: 100%;
+      padding: 8px;
+      margin-top: 6px;
+      font-size: 14px;
+    }
+
+    button {
+      margin-top: 16px;
+      padding: 8px 14px;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .danger {
+      background: #dc2626;
+      font-size: 12px;
+      margin-left: 10px;
+    }
+
+    .bank {
+      background: #f8fafc;
+      padding: 10px;
+      border-radius: 6px;
+      margin-top: 10px;
+      font-size: 14px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- nav.js defines window.user + authHeaders() -->
+<script src="/nav.js"></script>
+
+<div class="container">
+  <h2>Employee Profile</h2>
+
+  <!-- ADMIN SELECT -->
+  <div id="adminSelect" style="display:none">
+    <label>Select Employee</label>
+    <select id="employeeSelect"></select>
+  </div>
+
+  <label>Name *</label>
+  <input id="name" />
+
+  <label>Role</label>
+  <select id="role">
+    <option value="employee">Employee</option>
+    <option value="admin">Admin</option>
+  </select>
+
+  <label>Status</label>
+  <select id="status">
+    <option value="active">Active</option>
+    <option value="inactive">Inactive</option>
+  </select>
+
+  <label>Phone</label>
+  <input id="phone" />
+
+  <label>Position</label>
+  <input id="position" />
+
+  <label>Employment Type</label>
+  <input id="employment_type" />
+
+  <label>Daily Rate</label>
+  <input id="daily_rate" type="number" step="0.01" />
+
+  <button id="saveBtn">Save Profile</button>
+
+  <hr style="margin:30px 0">
+
+  <h3>🏦 Bank Accounts</h3>
+  <div id="bankList"></div>
+
+  <div class="row">
+    <div>
+      <label>Bank</label>
+      <select id="bank_name">
+        <option>BDO Network Bank</option>
+        <option>GCash</option>
+        <option>Others</option>
+      </select>
+    </div>
+
+    <div>
+      <label>Account Name</label>
+      <input id="account_name">
+    </div>
+  </div>
+
+  <label>Account Number</label>
+  <input id="account_number">
+
+  <button onclick="addBank()">Add Bank</button>
+</div>
+
+<script>
+/* =====================
+   AUTH / GLOBAL STATE
+===================== */
+if (!window.user) {
+  location.href = "/login.html";
+}
+
+const me = window.user;
+let currentEmployeeId = me.id;
+let currentBanks = [];
+
+/* =====================
+   ADMIN MODE
+===================== */
+if (me.role === "admin") {
+  document.getElementById("adminSelect").style.display = "block";
+
+  loadEmployeeOptions().then(() => {
+    // after options are loaded, load profile+banks
+    loadAll();
+  });
+
+  document.getElementById("employeeSelect").onchange = (e) => {
+    currentEmployeeId = e.target.value;
+    loadAll();
+  };
+} else {
+  // employee editing themselves only
+  // they cannot change role/status/daily_rate
+  document.getElementById("role").disabled = true;
+  document.getElementById("status").disabled = true;
+  document.getElementById("daily_rate").disabled = true;
+  loadAll();
+}
+
+/* =====================
+   LOAD EMPLOYEE DROPDOWN (ADMIN)
+===================== */
+async function loadEmployeeOptions() {
+  const sel = document.getElementById("employeeSelect");
+  sel.innerHTML = "";
+
+  const res = await fetch("/employees", { headers: authHeaders() });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  const data = await res.json();
+
+  data.forEach((e, i) => {
+    const o = document.createElement("option");
+    o.value = e.id;
+    o.textContent = `${e.name} (${e.employee_id || "—"})`;
+    sel.appendChild(o);
+    if (i === 0) currentEmployeeId = e.id;
+  });
+}
+
+/* =====================
+   LOAD PROFILE + BANKS
+===================== */
+async function loadAll() {
+  await loadProfile();
+  await loadBanks();
+}
+
+/* PROFILE */
+async function loadProfile() {
+  const res = await fetch(`/employee/${currentEmployeeId}`, {
+    headers: authHeaders()
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  const profile = await res.json();
+
+  document.getElementById("name").value = profile.name || "";
+  document.getElementById("role").value = profile.role || "employee";
+  document.getElementById("status").value = profile.status || "active";
+  document.getElementById("phone").value = profile.phone || "";
+  document.getElementById("position").value = profile.position || "";
+  document.getElementById("employment_type").value = profile.employment_type || "";
+
+  // 🔹 NEW: load daily_rate into the field
+  document.getElementById("daily_rate").value =
+    profile.daily_rate != null ? profile.daily_rate : "";
+}
+
+/* =====================
+   BANKS (MATCH NEW API)
+   - GET /employee/:id/banks  (requireAuth)
+   - POST /employee/:id/banks { rows: [...] }  replaces all
+===================== */
+async function loadBanks() {
+  const list = document.getElementById("bankList");
+  list.innerHTML = "";
+
+  const res = await fetch(`/employee/${currentEmployeeId}/banks`, {
+    headers: authHeaders()
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  const banks = await res.json();
+
+  // normalize without ids (server doesn't need bank id)
+  currentBanks = (banks || []).map(b => ({
+    bank_name: b.bank_name || "",
+    account_name: b.account_name || "",
+    account_number: b.account_number || ""
+  }));
+
+  if (!currentBanks.length) {
+    list.innerHTML = "<p><em>No bank accounts saved.</em></p>";
+    return;
+  }
+
+  currentBanks.forEach((b, idx) => {
+    const div = document.createElement("div");
+    div.className = "bank";
+    div.innerHTML = `
+      <strong>${b.bank_name}</strong><br>
+      ${b.account_name} – ${b.account_number}
+      <button class="danger" onclick="deleteBank(${idx})">Delete</button>
+    `;
+    list.appendChild(div);
+  });
+}
+
+async function saveBanks() {
+  const res = await fetch(`/employee/${currentEmployeeId}/banks`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ rows: currentBanks })
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    alert(d.error || "Failed to save bank accounts");
+  }
+}
+
+async function addBank() {
+  const bank_name = document.getElementById("bank_name").value;
+  const account_name = document.getElementById("account_name").value.trim();
+  const account_number = document.getElementById("account_number").value.trim();
+
+  if (!account_name || !account_number) {
+    alert("All bank fields are required");
+    return;
+  }
+
+  currentBanks.push({ bank_name, account_name, account_number });
+
+  // clear inputs
+  document.getElementById("account_name").value = "";
+  document.getElementById("account_number").value = "";
+
+  await saveBanks();
+  await loadBanks();
+}
+
+async function deleteBank(index) {
+  if (!confirm("Delete this bank account?")) return;
+
+  currentBanks.splice(index, 1);
+  await saveBanks();
+  await loadBanks();
+}
+
+/* =====================
+   SAVE PROFILE
+===================== */
+document.getElementById("saveBtn").onclick = async () => {
+  const name = document.getElementById("name").value.trim();
+  if (!name) {
+    alert("Name is required");
+    return;
+  }
+
+  const payload = {
+    name,
+    phone: document.getElementById("phone").value,
+    position: document.getElementById("position").value,
+    employment_type: document.getElementById("employment_type").value
+  };
+
+  // admin can also update role/status + daily_rate
+  if (me.role === "admin") {
+    payload.role = document.getElementById("role").value;
+    payload.status = document.getElementById("status").value;
+
+    const dailyRateRaw = document.getElementById("daily_rate").value;
+    payload.daily_rate = dailyRateRaw ? parseFloat(dailyRateRaw) : null;
+  }
+
+  const res = await fetch(`/employee/${currentEmployeeId}/update`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(payload)
+  });
+
+  const d = await res.json().catch(() => ({}));
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  if (!res.ok) {
+    alert(d.error || "Save failed");
+    return;
+  }
+
+  alert("Profile updated");
+  if (me.role === "admin") {
+    // optional redirect:
+    // location.href = "/employees.html";
+  }
+};
+</script>
+
+</body>
+</html>

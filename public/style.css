@@ -1,0 +1,442 @@
+:root {
+  --primary: #2563eb;
+  --primary-dark: #1e40af;
+  --success: #059669;
+  --danger: #ef4444;
+  --bg: #f3f4f6;
+  --card: #ffffff;
+  --text: #111827;
+  --muted: #6b7280;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header {
+  background: var(--primary);
+  color: white;
+  padding: 14px;
+  text-align: center;
+  font-weight: 600;
+}
+
+.container {
+  padding: 12px;
+  max-width: 1100px;
+  margin: auto;
+}
+
+h2 {
+  margin: 16px 0 8px;
+  font-size: 18px;
+}
+
+.card {
+  background: var(--card);
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 12px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.08);
+}
+
+input, select, button {
+  width: 100%;
+  padding: 12px;
+  margin-top: 8px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  font-size: 15px;
+}
+
+button {
+  border: none;
+  background: var(--primary);
+  color: white;
+  font-weight: 600;
+}
+
+button.secondary {
+  background: var(--success);
+}
+
+button.danger {
+  background: var(--danger);
+}
+
+button.small {
+  padding: 6px;
+  font-size: 13px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+}
+
+.day {
+  background: var(--card);
+  border-radius: 14px;
+  padding: 10px;
+  min-height: 140px;
+}
+
+.day-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.shift {
+  background: var(--primary);
+  color: white;
+  border-radius: 10px;
+  padding: 6px;
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.shift small {
+  opacity: .9;
+}
+
+.footer {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 12px;
+}
+.container {
+  padding: 16px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 120px repeat(7, 1fr);
+  border: 1px solid #ddd;
+}
+
+.cell {
+  border: 1px solid #e5e7eb;
+  min-height: 60px;
+  padding: 6px;
+  font-size: 14px;
+}
+
+.header {
+  background: #f3f4f6;
+  font-weight: bold;
+  text-align: center;
+}
+
+.name {
+  background: #f9fafb;
+  font-weight: 600;
+}
+
+.shift {
+  background: #dbeafe;
+  border-radius: 6px;
+  text-align: center;
+}
+.cell.clickable {
+  cursor: pointer;
+}
+
+.cell.clickable:hover {
+  background: #eef2ff;
+}
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: #f4f6f8;
+}
+
+.page-header {
+  background: #2563eb;
+  color: white;
+  padding: 16px;
+  font-size: 20px;
+}
+
+.container {
+  padding: 16px;
+}
+
+input[type="date"] {
+  padding: 10px;
+  width: 100%;
+  margin-bottom: 16px;
+  font-size: 16px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 150px repeat(7, 1fr);
+  gap: 1px;
+  background: #ddd;
+}
+
+.cell {
+  background: white;
+  padding: 12px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.header {
+  font-weight: bold;
+  background: #f1f5f9;
+}
+
+.employee {
+  text-align: left;
+  font-weight: 600;
+}
+
+.shift.empty {
+  color: #9ca3af;
+  cursor: pointer;
+}
+
+/* =========================
+   MOBILE RESPONSIVE
+========================= */
+@media (max-width: 768px) {
+
+  body {
+    font-size: 14px;
+  }
+
+  .container {
+    padding: 12px;
+  }
+
+  table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  th, td {
+    font-size: 12px;
+    padding: 6px;
+  }
+
+  button {
+    width: 100%;
+    margin-top: 8px;
+  }
+
+  input, select {
+    font-size: 16px; /* prevents iOS zoom */
+  }
+
+  .shift {
+    font-size: 12px;
+    padding: 8px;
+  }
+
+  .add {
+    font-size: 20px;
+  }
+}
+
+@media (max-width: 768px) {
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+}
+/* =====================
+   NAV – MOBILE FRIENDLY
+===================== */
+.nav {
+  background: #2563eb;
+  color: white;
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+}
+
+.nav-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+}
+
+.nav-left {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.nav-links {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.nav-links::-webkit-scrollbar {
+  display: none;
+}
+
+.nav-links a {
+  color: white;
+  text-decoration: none;
+  font-size: 14px;
+  white-space: nowrap;
+  padding: 6px 4px;
+}
+
+.logout {
+  margin-left: auto;
+  background: white;
+  color: #2563eb;
+  border: none;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* =====================
+   CALENDAR – MOBILE FIX
+===================== */
+table {
+  min-width: 720px; /* forces scroll instead of squish */
+}
+
+.container {
+  overflow-x: auto;
+}
+
+/* lock first column visually */
+.label {
+  position: sticky;
+  left: 0;
+  background: #fafafa;
+  z-index: 2;
+}
+
+/* =====================
+   FORMS – MOBILE
+===================== */
+input,
+select,
+button {
+  font-size: 16px; /* prevents iOS zoom */
+}
+
+button {
+  padding: 12px;
+}
+
+/* =====================
+   NAV BAR
+===================== */
+.nav {
+  background: #2563eb;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.nav-links a {
+  color: white;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.nav-links a:hover {
+  text-decoration: underline;
+}
+
+.logout {
+  background: white;
+  color: #2563eb;
+  border: none;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+/* Hamburger */
+.hamburger {
+  display: none;
+  font-size: 22px;
+  background: none;
+  border: none;
+  color: white;
+  cursor: pointer;
+}
+
+/* =====================
+   MOBILE
+===================== */
+@media (max-width: 768px) {
+  .hamburger {
+    display: block;
+  }
+
+  .nav-links {
+    display: none;
+    position: absolute;
+    top: 56px;
+    left: 0;
+    right: 0;
+    background: #2563eb;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 10px;
+  }
+
+  .nav-links.open {
+    display: flex;
+  }
+
+  .nav-links a,
+  .nav-links button {
+    padding: 12px;
+    text-align: left;
+    width: 100%;
+  }
+}
+.shift {
+  white-space: pre-line;
+}
+
+.shift span {
+  margin-right: 2px;
+}
+
+button {
+  padding: 6px 10px;
+  font-size: 13px;
+}

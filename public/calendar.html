@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Weekly Shift Calendar</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+<style>
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: #f4f6f8;
+}
+
+.container {
+  padding: 16px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+}
+
+th, td {
+  border: 1px solid #ddd;
+  padding: 8px;
+  text-align: center;
+  vertical-align: top;
+}
+
+th {
+  background: #f1f5f9;
+}
+
+.label {
+  background: #fafafa;
+  font-weight: 600;
+  text-align: left;
+  width: 140px;
+}
+
+.cell {
+  min-height: 140px;
+}
+
+.add {
+  cursor: pointer;
+  font-size: 18px;
+  color: #9ca3af;
+  margin-bottom: 4px;
+}
+
+.shift {
+  background: #dbeafe;
+  padding: 6px;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.claimed {
+  background: #bbf7d0;
+  cursor: default;
+}
+
+.dayoff {
+  padding: 6px;
+  margin-bottom: 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.dayoff.pending {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.dayoff.approved {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.day-name {
+  font-weight: 600;
+}
+
+.day-date {
+  font-size: 12px;
+  color: #6b7280;
+}
+</style>
+</head>
+
+<body>
+
+<!-- WEEK CONTROLS -->
+<div style="display:flex; gap:8px; align-items:center; margin:12px;">
+  <button id="prevWeek">◀ Prev</button>
+  <input type="date" id="weekPicker">
+  <button id="nextWeek">Next ▶</button>
+</div>
+
+<div class="container">
+
+  <!-- CSV IMPORT (ADMIN ONLY) -->
+  <div id="csvImport" style="display:none;margin-bottom:10px;">
+    <input type="file" id="csvFile">
+    <button onclick="uploadCSV()">Import CSV</button>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th></th>
+        <th><div class="day-name">Mon</div><div class="day-date" id="d0"></div></th>
+        <th><div class="day-name">Tue</div><div class="day-date" id="d1"></div></th>
+        <th><div class="day-name">Wed</div><div class="day-date" id="d2"></div></th>
+        <th><div class="day-name">Thu</div><div class="day-date" id="d3"></div></th>
+        <th><div class="day-name">Fri</div><div class="day-date" id="d4"></div></th>
+        <th><div class="day-name">Sat</div><div class="day-date" id="d5"></div></th>
+        <th><div class="day-name">Sun</div><div class="day-date" id="d6"></div></th>
+      </tr>
+    </thead>
+    <tbody id="calendarBody"></tbody>
+  </table>
+
+</div>
+
+<!-- NAV: defines window.user + authHeaders() -->
+<script src="/nav.js"></script>
+
+<script>
+/* =====================
+   AUTH
+===================== */
+if (!window.user) {
+  location.href = "/login.html";
+}
+
+if (window.user.role === "admin") {
+  document.getElementById("csvImport").style.display = "block";
+}
+
+const calendarBody = document.getElementById("calendarBody");
+
+/* =====================
+   DATE HELPERS (LOCAL SAFE)
+===================== */
+function toISO(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function getMonday(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
+function updateHeaderDates(monday) {
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    document.getElementById("d" + i).innerText =
+      d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+}
+
+/* =====================
+   INITIALS
+===================== */
+function toInitials(names) {
+  if (!names) return "";
+
+  return names
+    .split(",")
+    .map(name => {
+      const clean = name.trim();
+      const initials = clean
+        .split(" ")
+        .map(p => p[0])
+        .join("")
+        .toUpperCase();
+
+      const color = colorFromName(clean);
+      return `<span style="color:${color}; font-weight:600;">${initials}</span>`;
+    })
+    .join(" · ");
+}
+
+function colorFromName(name) {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return `hsl(${Math.abs(hash) % 360}, 65%, 45%)`;
+}
+
+/* =====================
+   WEEK NAV
+===================== */
+function shiftWeek(days) {
+  const d = new Date(weekPicker.value + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  weekPicker.value = toISO(d);
+  loadShifts();
+}
+
+/* =====================
+   LOAD CALENDAR
+===================== */
+async function loadShifts() {
+  const monday = getMonday(weekPicker.value);
+  updateHeaderDates(monday);
+  calendarBody.innerHTML = "";
+
+  // /shifts is optionalAuth, but we still send token when present
+  const res = await fetch(
+    `/shifts?week=${toISO(monday)}&user_id=${window.user.id}`,
+    { headers: authHeaders() }
+  );
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  const { shifts, dayOffs } = await res.json().catch(() => ({ shifts: [], dayOffs: [] }));
+
+  const areas = ["barista", "kitchen"];
+
+  areas.forEach(area => {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td class="label">${area === "barista" ? "☕ Barista" : "🍳 Kitchen"}</td>`;
+
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      const iso = toISO(d);
+
+      const td = document.createElement("td");
+      td.className = "cell";
+
+      if (window.user.role === "admin") {
+        const add = document.createElement("div");
+        add.className = "add";
+        add.textContent = "+";
+        add.onclick = () => createShift(iso, area);
+        td.appendChild(add);
+      }
+
+      // SHIFTS
+      shifts
+        .filter(s => s.area === area && s.shift_date === iso)
+        .forEach(s => {
+          const remaining = s.slots - s.claimed;
+          const div = document.createElement("div");
+          div.className = "shift" + (remaining === 0 ? " claimed" : "");
+
+          let label =
+            `${s.start_time} – ${s.end_time}<br>` +
+            `${remaining}/${s.slots} slots`;
+
+          if (s.claimed_names) {
+            label += `<br>${toInitials(s.claimed_names)}`;
+          }
+
+          // Explain why blocked
+          if (
+            window.user.role === "employee" &&
+            s.is_mine === true &&
+            s.my_status === "approved" &&
+            !s.cancellation_status
+          ) {
+            label += "<br><small>🛑 Cancel this shift to claim another today</small>";
+          }
+
+          // Visual hint pending
+          if (
+            window.user.role === "employee" &&
+            s.is_mine === true &&
+            s.my_status === "pending"
+          ) {
+            div.style.opacity = "0.7";
+            label += "<br><em>Pending approval (click to cancel)</em>";
+          }
+
+          div.innerHTML = label;
+
+          if (window.user.role === "admin") {
+            // Admin → delete shift
+            div.onclick = () => {
+              if (confirm("Delete this shift?")) deleteShift(s.id);
+            };
+          } else if (
+            window.user.role === "employee" &&
+            s.is_mine === true &&
+            (s.my_status === "approved" || s.my_status === "pending")
+          ) {
+            // Employee → request cancel
+            div.onclick = () => {
+              const msg =
+                s.my_status === "pending"
+                  ? "Cancel this shift request?"
+                  : "Request cancellation of this shift?";
+              if (confirm(msg)) {
+                requestCancel(s.id);
+              }
+            };
+          } else if (
+            window.user.role === "employee" &&
+            remaining > 0 &&
+            !s.my_status
+          ) {
+            // Employee → claim
+            div.onclick = () => claimShift(s.id);
+          }
+
+          td.appendChild(div);
+        });
+
+      // DAY-OFFS
+      dayOffs
+        .filter(d0 => d0.off_date === iso)
+        .forEach(d0 => {
+          const div = document.createElement("div");
+          div.className = `dayoff ${d0.status}`;
+          div.textContent =
+            d0.status === "approved"
+              ? `🟡 ${d0.name} (Day-Off)`
+              : `🔴 ${d0.name} (Pending)`;
+          td.appendChild(div);
+        });
+
+      tr.appendChild(td);
+    }
+
+    calendarBody.appendChild(tr);
+  });
+}
+
+/* =====================
+   ACTIONS (with auth)
+===================== */
+async function createShift(date, area) {
+  const start = prompt("Start time (HH:MM)");
+  const end = prompt("End time (HH:MM)");
+  const slots = Number(prompt("Slots"));
+
+  if (!start || !end || !slots) return;
+
+  const res = await fetch("/shifts", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      date,
+      start_time: start,
+      end_time: end,
+      slots,
+      area
+    })
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  loadShifts();
+}
+
+async function uploadCSV() {
+  const file = csvFile.files[0];
+  if (!file) return alert("Select a CSV file");
+
+  const fd = new FormData();
+  fd.append("file", file);
+
+  const res = await fetch("/admin/import-shifts", {
+    method: "POST",
+    headers: authHeaders(), // only Authorization; browser sets boundary
+    body: fd
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert(data.error || "CSV import failed");
+    return;
+  }
+
+  alert(`Imported ${data.imported ?? 0} shifts`);
+  loadShifts();
+}
+
+async function claimShift(id) {
+  const res = await fetch(`/shifts/${id}/claim`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" })
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  if (!res.ok) {
+    alert(data.error || "Failed to claim shift");
+    return;
+  }
+
+  loadShifts();
+}
+
+async function deleteShift(id) {
+  const res = await fetch(`/shifts/${id}`, {
+    method: "DELETE",
+    headers: authHeaders()
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    alert("Failed to delete shift\n" + txt);
+    return;
+  }
+
+  loadShifts();
+}
+
+async function requestCancel(shiftId) {
+  const res = await fetch(`/shifts/${shiftId}/request-cancel`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" })
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  if (!res.ok) {
+    alert(data.error || "Failed to request cancellation");
+    return;
+  }
+
+  await loadShifts();
+}
+
+/* =====================
+   INIT
+===================== */
+weekPicker.addEventListener("change", loadShifts);
+prevWeek.onclick = () => shiftWeek(-7);
+nextWeek.onclick = () => shiftWeek(7);
+
+weekPicker.value = toISO(new Date());
+loadShifts();
+</script>
+
+</body>
+</html>

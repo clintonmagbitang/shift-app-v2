@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>My Shifts</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: #f4f6f8;
+    }
+    .container {
+      padding: 16px;
+      max-width: 900px;
+      margin: auto;
+    }
+    .shift {
+      background: white;
+      border-radius: 8px;
+      padding: 14px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    }
+    .meta {
+      font-size: 14px;
+      color: #374151;
+    }
+    .actions {
+      margin-top: 10px;
+    }
+    .actions button {
+      border: none;
+      padding: 6px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    /* ✅ Different colors */
+    .btn-fill {
+      background: #2563eb;  /* blue */
+      color: #ffffff;
+    }
+    .btn-edit {
+      background: #f97316;  /* orange */
+      color: #ffffff;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+
+  <button
+    onclick="openUnscheduledTimesheet()"
+    style="background:#16a34a;color:white;padding:8px 12px;border:none;border-radius:6px;margin-bottom:12px;">
+    + Log Unscheduled Shift
+  </button>
+
+  <div id="list">Loading shifts…</div>
+
+  <div id="timesheetModal"
+    style="display:none; background:#00000088; position:fixed; inset:0;">
+    <div style="background:white; max-width:400px; margin:10% auto;
+                padding:20px; border-radius:8px;">
+
+      <h3>Fill Timesheet</h3>
+
+      <input type="date" id="unscheduledDate"
+        style="width:100%; margin-bottom:10px; display:none;">
+
+      <textarea id="unscheduledRemarks"
+        placeholder="Remarks (required for unscheduled shift)"
+        style="width:100%; margin-bottom:10px; display:none;"></textarea>
+
+      <input type="time" id="timeIn" style="width:100%; margin-bottom:10px;">
+      <input type="time" id="timeOut" style="width:100%; margin-bottom:10px;">
+
+      <button onclick="saveTimesheet()">Save</button>
+      <button onclick="closeModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="/nav.js"></script>
+
+<script>
+/* =====================
+   HELPERS
+===================== */
+function computeWorkedHours(timeIn, timeOut) {
+  const [inH, inM] = timeIn.split(":").map(Number);
+  const [outH, outM] = timeOut.split(":").map(Number);
+  const inMin = inH * 60 + inM;
+  const outMin = outH * 60 + outM;
+  if (outMin <= inMin) return null;
+  return (outMin - inMin) / 60;
+}
+
+function minutesDiff(actual, scheduled) {
+  const [aH, aM] = actual.split(":").map(Number);
+  const [sH, sM] = scheduled.split(":").map(Number);
+  return (aH * 60 + aM) - (sH * 60 + sM);
+}
+
+function requireExplanation(message) {
+  const reason = prompt(
+    message +
+    "\n\n⚠ Overtime does NOT offset late arrival or early departure." +
+    "\n(Minimum 3 characters)"
+  );
+  if (!reason || reason.trim().length < 3) {
+    alert("Explanation is required.");
+    return null;
+  }
+  return reason.trim();
+}
+
+function timeToMinutes(t) {
+  const [h, m] = t.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function minutesToTime(mins) {
+  mins = Math.max(0, Math.min(24 * 60 - 1, mins));
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+// Nearest 30 mins, but exactly :15 rounds DOWN (your rule)
+function roundTo30Minutes(t) {
+  const mins = timeToMinutes(t);
+  const r = mins % 30;
+
+  if (r <= 15) return minutesToTime(mins - r);
+  return minutesToTime(mins + (30 - r));
+}
+
+function roundToHalfHourHours(hours) {
+  const mins = hours * 60;
+  const r = mins % 30;
+  const roundedMins = (r <= 15) ? (mins - r) : (mins + (30 - r));
+  return roundedMins / 60;
+}
+
+/* =====================
+   AUTH & STATE
+===================== */
+const user = window.user;
+if (!user) location.href = "/login.html";
+
+let currentShiftId = null;
+let currentShiftStart = null;
+let currentShiftEnd = null;
+let isUnscheduled = false;
+let currentShiftDate = null;
+
+/* =====================
+   LOAD SHIFTS (with Edit/Fill)
+===================== */
+async function loadMyShifts() {
+  const list = document.getElementById("list");
+  list.innerHTML = "Loading shifts…";
+
+  // get shifts + timesheets so we know which have TS
+  const [shiftsRes, tsRes] = await Promise.all([
+    fetch("/my-shifts", { headers: authHeaders() }),
+    fetch("/timesheets", { headers: authHeaders() })
+  ]);
+
+  if (shiftsRes.status === 401 || shiftsRes.status === 403 ||
+      tsRes.status === 401 || tsRes.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  const shifts = await shiftsRes.json();
+  const timesheets = await tsRes.json();
+
+  // Map shift_id -> timesheet
+  const tsByShift = {};
+  (timesheets || []).forEach(t => {
+    if (t.shift_id) {
+      tsByShift[t.shift_id] = t;
+    }
+  });
+
+  list.innerHTML = "";
+
+  (shifts || []).forEach(s => {
+    if (s.status !== "approved") return;
+
+    const hasTs = !!tsByShift[s.shift_id];
+    const btnLabel = hasTs ? "Edit Timesheet" : "Fill Timesheet";
+    const btnClass = hasTs ? "btn-edit" : "btn-fill";
+
+    const div = document.createElement("div");
+    div.className = "shift";
+    div.innerHTML = `
+      <h3>${s.shift_date}</h3>
+      <div class="meta">${s.start_time} – ${s.end_time}</div>
+      <div class="actions">
+        <button
+          class="${btnClass}"
+          onclick="openTimesheet(
+            ${s.shift_id},
+            '${s.shift_date}',
+            '${s.start_time}',
+            '${s.end_time}'
+          )">
+          ${btnLabel}
+        </button>
+      </div>
+    `;
+    list.appendChild(div);
+  });
+
+  if (!list.children.length) {
+    list.innerHTML = "<em>No approved shifts yet.</em>";
+  }
+}
+loadMyShifts();
+
+/* =====================
+   MODAL
+===================== */
+function openUnscheduledTimesheet() {
+  isUnscheduled = true;
+  currentShiftId = null;
+
+  unscheduledDate.style.display = "block";
+  unscheduledRemarks.style.display = "block";
+
+  unscheduledDate.value = "";
+  unscheduledRemarks.value = "";
+  timeIn.value = "";
+  timeOut.value = "";
+
+  timesheetModal.style.display = "block";
+}
+
+function openTimesheet(id, shiftDate, start, end) {
+  isUnscheduled = false;
+  currentShiftId = id;
+  currentShiftDate = (shiftDate || "").slice(0, 10);
+  currentShiftStart = start;
+  currentShiftEnd = end;
+
+  unscheduledDate.style.display = "none";
+  unscheduledRemarks.style.display = "none";
+  timeIn.value = "";
+  timeOut.value = "";
+
+  timesheetModal.style.display = "block";
+}
+
+function closeModal() {
+  timesheetModal.style.display = "none";
+}
+
+/* =====================
+   SAVE TIMESHEET
+===================== */
+async function saveTimesheet() {
+  let work_date = null;
+  let attendanceRemarks = null;
+  let attendance = "present";
+
+  let overtime_claimed = false;
+  let overtime_hours = null;
+  let overtime_reason = null;
+
+  // work date
+  if (isUnscheduled) {
+    work_date = unscheduledDate.value;
+    attendanceRemarks = unscheduledRemarks.value;
+
+    if (!work_date || !attendanceRemarks || attendanceRemarks.trim().length < 3) {
+      alert("Date and remarks required.");
+      return;
+    }
+  } else {
+    work_date = currentShiftDate;
+  }
+
+  // actual times
+  const actual_in = timeIn.value;
+  const actual_out = timeOut.value;
+
+  if (!actual_in || !actual_out) {
+    alert("Time in/out required");
+    return;
+  }
+
+  const worked_actual = computeWorkedHours(actual_in, actual_out);
+  if (!worked_actual) {
+    alert("Invalid time range");
+    return;
+  }
+
+  // rounded times
+  const rounded_in = roundTo30Minutes(actual_in);
+  const rounded_out = roundTo30Minutes(actual_out);
+
+  const worked = computeWorkedHours(rounded_in, rounded_out);
+  if (!worked) {
+    alert("Rounded time range invalid");
+    return;
+  }
+
+  // shift-based rules
+  if (!isUnscheduled) {
+    const diffIn = minutesDiff(rounded_in, currentShiftStart);
+    const diffOut = minutesDiff(rounded_out, currentShiftEnd);
+
+    if (diffIn <= -30) {
+      const r = prompt(
+        `Your shift starts at ${currentShiftStart}.\nPlease indicate reason for early in.\n\n(Minimum 3 characters)`
+      );
+      if (!r || r.trim().length < 3) return;
+      attendance = "early_in";
+      attendanceRemarks = r.trim();
+    }
+
+    if (diffIn > 15) {
+      const r = prompt(
+        `You are ${diffIn} minutes late.\nShift start: ${currentShiftStart}\n\n(Minimum 3 characters)`
+      );
+      if (!r || r.trim().length < 3) return;
+      attendance = "late";
+      attendanceRemarks = r.trim();
+    }
+
+    if (diffOut > 15) {
+      const r = prompt(
+        `Your shift is only until ${currentShiftEnd}.\nPlease indicate reason for late-out.\n\n(Minimum 3 characters)`
+      );
+      if (!r || r.trim().length < 3) return;
+      attendance = "late_out";
+      attendanceRemarks = r.trim();
+    }
+
+    if (diffOut < -15) {
+      const r = prompt(
+        `You timed out earlier than scheduled.\nShift end: ${currentShiftEnd}\n\n(Minimum 3 characters)`
+      );
+      if (!r || r.trim().length < 3) return;
+      attendance = "early_out";
+      attendanceRemarks = r.trim();
+    }
+  }
+
+  // undertime
+  if (worked < 8.75) {
+    alert(`Undertime detected (${worked.toFixed(2)} hrs).`);
+    if (!attendanceRemarks) attendance = "undertime";
+  }
+
+  // overtime
+  if (worked > 9.25) {
+    const wantOT = confirm(
+      `Overtime detected.\nWorked ${worked.toFixed(2)} hours.\n\nDo you want to claim overtime?`
+    );
+
+    if (wantOT) {
+      const r = prompt(
+        "Please indicate reason for overtime.\n" +
+        "Examples: madaming tao, absent si XXXX, pinagovertime ni maam\n\n" +
+        "(Minimum 3 characters)"
+      );
+      if (!r || r.trim().length < 3) return;
+
+      overtime_claimed = true;
+      overtime_reason = r.trim();
+      overtime_hours = roundToHalfHourHours(worked - 9);
+    }
+  }
+
+  // overwrite check
+  const checkRes = await fetch(`/timesheets/exists?work_date=${work_date}`, {
+    headers: authHeaders()
+  });
+  const checkData = await checkRes.json();
+
+  if (checkData.exists) {
+    const ok = confirm(
+      "You have already logged your time.\nDo you want to overwrite it?"
+    );
+    if (!ok) return;
+  }
+
+  // final remarks
+  let finalRemarks = attendanceRemarks || null;
+  if (overtime_claimed && overtime_reason) {
+    finalRemarks = (finalRemarks ? `${finalRemarks}\n` : "") + `OT: ${overtime_reason}`;
+  }
+
+  // save
+  const res = await fetch("/timesheets", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      rows: [{
+        shift_id: isUnscheduled ? null : currentShiftId,
+        work_date,
+        time_in: actual_in,
+        time_out: actual_out,
+        worked_hours: worked,
+        attendance,
+        remarks: finalRemarks,
+        overtime_claimed,
+        overtime_hours
+      }]
+    })
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    alert(data.error || "Failed to save timesheet");
+    return;
+  }
+
+  closeModal();
+  alert("Timesheet logged successfully ✅");
+  loadMyShifts();
+}
+</script>
+
+</body>
+</html>

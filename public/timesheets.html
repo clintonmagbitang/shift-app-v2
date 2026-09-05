@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Timesheets</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+<style>
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: #f4f6f8;
+}
+
+.container {
+  max-width: 1100px;
+  margin: auto;
+  padding: 20px;
+}
+
+h1 {
+  margin-top: 0;
+}
+
+.controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+select {
+  padding: 6px;
+  font-size: 14px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+}
+
+th, td {
+  border: 1px solid #e5e7eb;
+  padding: 8px;
+  text-align: center;
+  font-size: 14px;
+}
+
+th {
+  background: #f1f5f9;
+  font-weight: 600;
+}
+
+tr.locked {
+  background: #f8fafc;
+  opacity: 0.85;
+}
+
+.shift-info {
+  font-size: 12px;
+  color: #374151;
+}
+
+.no-shift {
+  color: #6b7280;
+  font-style: italic;
+}
+
+button {
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.save {
+  background: #2563eb;
+  color: white;
+}
+
+.edit {
+  background: #f59e0b;
+  color: white;
+}
+
+.unscheduled {
+  background: #16a34a;
+  color: white;
+}
+
+.finalize {
+  background: #111827;
+  color: white;
+}
+
+textarea {
+  width: 100%;
+  resize: vertical;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+  <h1>🕒 Timesheets</h1>
+
+  <div class="controls">
+    <label for="cutoffSelect">Cutoff</label>
+    <select id="cutoffSelect"></select>
+
+    <button class="save" onclick="loadRange()">Load</button>
+    <button class="finalize" onclick="finalizeCutoff()">Finalize Cutoff</button>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Shift</th>
+        <th>Time In</th>
+        <th>Time Out</th>
+        <th>Attendance</th>
+        <th>Remarks</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+
+<script src="/nav.js"></script>
+
+<script>
+/* =====================
+   AUTH
+===================== */
+if (!window.user) location.href = "/login.html";
+
+/* =====================
+   OT REJECTION NOTIFICATION
+===================== */
+function showOTRejectionPopup(items) {
+  const message = items.map(x =>
+    `Date: ${x.shift_date || x.work_date}\nReason: ${x.overtime_rejection_reason}`
+  ).join("\n\n---\n\n");
+
+  alert("⚠ Overtime Rejected:\n\n" + message);
+}
+
+async function ackOTRejections(ids) {
+  if (!ids.length) return;
+
+  await fetch("/timesheets/ack-ot-rejection", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ ids })
+  });
+}
+
+/* =====================
+   DATE / TIME HELPERS
+===================== */
+function toISO(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function daysBetween(from, to) {
+  const days = [];
+  let d = new Date(from + "T00:00:00");
+  const end = new Date(to + "T00:00:00");
+  while (d <= end) {
+    days.push(new Date(d));
+    d.setDate(d.getDate() + 1);
+  }
+  return days;
+}
+
+function timeToMinutes(t) {
+  const [h, m] = t.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function minutesToTime(mins) {
+  mins = Math.max(0, Math.min(24 * 60 - 1, mins));
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
+}
+
+// nearest 30 mins, with :15 rounding DOWN
+function roundTo30Minutes(t) {
+  const mins = timeToMinutes(t);
+  const r = mins % 30;
+  if (r <= 15) return minutesToTime(mins - r);
+  return minutesToTime(mins + (30 - r));
+}
+
+function roundToHalfHourHours(hours) {
+  const mins = hours * 60;
+  const r = mins % 30;
+  const roundedMins = (r <= 15) ? (mins - r) : (mins + (30 - r));
+  return roundedMins / 60;
+}
+
+function computeWorkedHours(timeIn, timeOut) {
+  const [inH, inM] = timeIn.split(":").map(Number);
+  const [outH, outM] = timeOut.split(":").map(Number);
+  const inMin = inH * 60 + inM;
+  const outMin = outH * 60 + outM;
+  if (outMin <= inMin) return null;
+  return (outMin - inMin) / 60;
+}
+
+function minutesDiff(actual, scheduled) {
+  const [aH, aM] = actual.split(":").map(Number);
+  const [sH, sM] = scheduled.split(":").map(Number);
+  return (aH * 60 + aM) - (sH * 60 + sM);
+}
+
+/* =====================
+   CUTOFF SELECT
+===================== */
+function buildCutoffOptions() {
+  const sel = document.getElementById("cutoffSelect");
+  sel.innerHTML = "";
+
+  const today = new Date();
+  const monthsBack = 3;
+  const monthsAhead = 1;
+  const options = [];
+
+  for (let offset = -monthsBack; offset <= monthsAhead; offset++) {
+    const base = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+    const y = base.getFullYear();
+    const m = base.getMonth();
+
+    const first = new Date(y, m, 1);
+    const fifteenth = new Date(y, m, 15);
+    const sixteenth = new Date(y, m, 16);
+    const last = new Date(y, m + 1, 0);
+
+    options.push({
+      label: `${first.toLocaleString(undefined, { month: "short" })} 1–15 ${y}`,
+      from: toISO(first),
+      to: toISO(fifteenth)
+    });
+
+    options.push({
+      label: `${sixteenth.toLocaleString(undefined, { month: "short" })} 16–${last.getDate()} ${y}`,
+      from: toISO(sixteenth),
+      to: toISO(last)
+    });
+  }
+
+  let selectedIndex = 0;
+  const todayISO = toISO(today);
+
+  options.forEach((c, idx) => {
+    const o = document.createElement("option");
+    o.value = `${c.from}|${c.to}`;
+    o.textContent = c.label;
+    sel.appendChild(o);
+
+    if (todayISO >= c.from && todayISO <= c.to) {
+      selectedIndex = idx;
+    }
+  });
+
+  sel.selectedIndex = selectedIndex;
+}
+
+function getSelectedCutoffRange() {
+  const sel = document.getElementById("cutoffSelect");
+  if (!sel.value) return null;
+  const [from, to] = sel.value.split("|");
+  return { from, to };
+}
+
+/* =====================
+   LOAD RANGE
+===================== */
+async function loadRange() {
+  const range = getSelectedCutoffRange();
+  if (!range) {
+    alert("Select a cutoff");
+    return;
+  }
+  const { from, to } = range;
+
+  const tbody = document.getElementById("rows");
+  tbody.innerHTML = "";
+
+  const [shiftRes, tsRes] = await Promise.all([
+    fetch("/my-shifts", { headers: authHeaders() }),
+    fetch("/timesheets", { headers: authHeaders() })
+  ]);
+
+  const shifts = await shiftRes.json();
+  const timesheets = await tsRes.json();
+
+  // OT rejection notification
+  const rejected = Array.isArray(timesheets)
+    ? timesheets.filter(t =>
+        (t.overtime_status || "").toLowerCase() === "rejected" &&
+        t.overtime_rejection_reason &&
+        !t.overtime_rejection_seen
+      )
+    : [];
+
+  if (rejected.length) {
+    showOTRejectionPopup(rejected);
+    await ackOTRejections(rejected.map(x => x.id));
+  }
+
+  const shiftMap = {};
+  shifts.forEach(s => {
+    if (s.status === "approved") {
+      // s.shift_date is already 'YYYY-MM-DD'
+      shiftMap[s.shift_date] = s;
+    }
+  });
+
+  const tsMap = {};
+  timesheets.forEach(t => {
+    const key = t.shift_date || t.work_date;
+    if (key) tsMap[key] = t;
+  });
+
+  daysBetween(from, to).forEach(d => {
+    const date = toISO(d);
+    const shift = shiftMap[date] || null;
+    const ts = tsMap[date] || null;
+
+    const attendanceText = ts
+      ? (ts.attendance_full || ts.attendance || "")
+      : "";    
+
+    const tr = document.createElement("tr");
+    if (ts?.locked) tr.classList.add("locked");
+
+    let shiftStart = "";
+    let shiftEnd = "";
+
+    if (shift) {
+      shiftStart = shift.shift_start || shift.start_time;
+      shiftEnd = shift.shift_end || shift.end_time;
+
+      tr.dataset.shiftId = shift.shift_id;
+      tr.dataset.start = shiftStart;
+      tr.dataset.end = shiftEnd;
+    } else {
+      tr.dataset.shiftId = "";
+      tr.dataset.start = "";
+      tr.dataset.end = "";
+    }
+
+    const remarks = ts?.remarks || "";
+
+    // Build action cell HTML separately so we can embed Absent
+    let actionHTML = "";
+    if (ts) {
+      if (ts.locked) {
+        actionHTML = `<span style="font-size:12px;color:#6b7280;">Locked</span>`;
+      } else {
+        actionHTML = `<button class="edit" onclick="enableEdit(this)">Edit</button>`;
+      }
+    } else {
+      actionHTML = `
+        <button class="save"
+          onclick="saveRow(this, '${date}', ${shift ? shift.shift_id : "null"}, '${shiftStart}', '${shiftEnd}')">
+          Save
+        </button>
+        <button class="unscheduled"
+          style="background:#6b7280"
+          onclick="markAbsent('${date}')">
+          Absent
+        </button>
+      `;
+    }
+
+        tr.innerHTML = `
+      <td>${date}</td>
+      <td>
+        ${
+          shift
+            ? `<div class="shift-info">${shiftStart} – ${shiftEnd}</div>`
+            : `<div class="no-shift">No shift claimed</div>`
+        }
+      </td>
+      <td>
+        <input type="time"
+               value="${ts?.time_in || ""}"
+               ${ts?.locked ? "disabled" : ""}>
+      </td>
+      <td>
+        <input type="time"
+               value="${ts?.time_out || ""}"
+               ${ts?.locked ? "disabled" : ""}>
+      </td>
+      <td>${attendanceText}</td>
+      <td>
+        <textarea ${ts?.locked ? "disabled" : ""}>${remarks}</textarea>
+      </td>
+      <td>${actionHTML}</td>
+    `;
+
+    tbody.appendChild(tr);
+  });
+}
+
+/* =====================
+   MARK ABSENT
+===================== */
+async function markAbsent(date) {
+  const ok = confirm(`Mark ${date} as ABSENT?`);
+  if (!ok) return;
+
+  const res = await fetch("/timesheets", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      rows: [{
+        shift_id: null,
+        work_date: date,
+        time_in: null,
+        time_out: null,
+        worked_hours: 0,
+        attendance: "absent",
+        remarks: null,
+        overtime_claimed: false,
+        overtime_hours: 0
+      }]
+    })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert(data.error || "Failed to mark absent");
+    return;
+  }
+
+  loadRange();
+}
+
+/* =====================
+   ROW ACTIONS
+===================== */
+function enableEdit(btn) {
+  const tr = btn.closest("tr");
+  tr.classList.remove("locked");
+
+  tr.querySelectorAll("input, textarea").forEach(i => i.disabled = false);
+
+  btn.textContent = "Save";
+  btn.className = "save";
+
+  btn.onclick = () => {
+    const date = tr.children[0].innerText;
+    const shiftId = tr.dataset.shiftId || null;
+    const start = tr.dataset.start || null;
+    const end = tr.dataset.end || null;
+
+    saveRow(btn, date, shiftId, start, end);
+  };
+}
+
+/* =====================
+   SAVE ROW
+===================== */
+async function saveRow(btn, date, shiftId = null, start = null, end = null) {
+  const tr = btn.closest("tr");
+
+  const actual_in = tr.children[2].querySelector("input").value;
+  const actual_out = tr.children[3].querySelector("input").value;
+  let attendanceRemarks = tr.children[5].querySelector("textarea").value.trim() || null;
+
+  if (!actual_in || !actual_out) return alert("Time in/out required");
+
+  const worked_actual = computeWorkedHours(actual_in, actual_out);
+  if (!worked_actual) return alert("Invalid time range");
+
+  const rounded_in = roundTo30Minutes(actual_in);
+  const rounded_out = roundTo30Minutes(actual_out);
+
+  const worked = computeWorkedHours(rounded_in, rounded_out);
+  if (!worked) return alert("Rounded time range invalid");
+
+  let attendance = "present";
+  let overtime_claimed = false;
+  let overtime_hours = null;
+  let overtime_reason = null;
+
+  if (shiftId && start && end) {
+    const diffIn = minutesDiff(rounded_in, start);
+    const diffOut = minutesDiff(rounded_out, end);
+
+    if (diffIn <= -30) {
+      const r = prompt(`Your shift starts at ${start}. Reason for early in?`);
+      if (!r || r.trim().length < 3) return;
+      attendance = "early_in";
+      attendanceRemarks = r.trim();
+    }
+
+    if (diffIn > 15) {
+      const r = prompt(`You are ${diffIn} minutes late. Reason?`);
+      if (!r || r.trim().length < 3) return;
+      attendance = "late";
+      attendanceRemarks = r.trim();
+    }
+
+    if (diffOut > 15) {
+      const r = prompt(`Late-out beyond ${end}. Reason?`);
+      if (!r || r.trim().length < 3) return;
+      attendance = "late_out";
+      attendanceRemarks = r.trim();
+    }
+
+    if (diffOut < -15) {
+      const r = prompt(`Early-out before ${end}. Reason?`);
+      if (!r || r.trim().length < 3) return;
+      attendance = "early_out";
+      attendanceRemarks = r.trim();
+    }
+  }
+
+  if (worked < 8.75) {
+    alert(`Undertime detected (${worked.toFixed(2)} hrs).`);
+    if (!attendanceRemarks) attendance = "undertime";
+  }
+
+  if (worked > 9.25) {
+    if (confirm(`Overtime detected (${worked.toFixed(2)} hrs). Claim OT?`)) {
+      const r = prompt("Reason for overtime?");
+      if (!r || r.trim().length < 3) return;
+      overtime_claimed = true;
+      overtime_reason = r.trim();
+      overtime_hours = roundToHalfHourHours(worked - 9);
+    }
+  }
+
+  let finalRemarks = attendanceRemarks;
+  if (overtime_claimed && overtime_reason) {
+    finalRemarks = (finalRemarks ? `${finalRemarks}\n` : "") + `OT: ${overtime_reason}`;
+  }
+
+  const res = await fetch("/timesheets", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      rows: [{
+        shift_id: shiftId,
+        work_date: date,
+        time_in: actual_in,
+        time_out: actual_out,
+        worked_hours: worked,
+        attendance,
+        remarks: finalRemarks,
+        overtime_claimed,
+        overtime_hours
+      }]
+    })
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    return alert(data.error || "Failed to save timesheet");
+  }
+
+  loadRange();
+}
+
+/* =====================
+   FINALIZE CUTOFF
+===================== */
+async function finalizeCutoff() {
+  const range = getSelectedCutoffRange();
+  if (!range) {
+    alert("Select a cutoff");
+    return;
+  }
+  const { from, to } = range;
+
+  const ok = confirm(
+    `Finalize timesheets for ${from} to ${to}?\n\n` +
+    "After finalizing, you can no longer edit entries in this cutoff."
+  );
+  if (!ok) return;
+
+  const res = await fetch("/timesheets/finalize-cutoff", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ from, to })
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    if (data.missing_dates && data.missing_dates.length) {
+      alert(
+        "You still have days without timesheets or ABSENT marked:\n\n" +
+        data.missing_dates.join("\n")
+      );
+    } else {
+      alert(data.error || "Failed to finalize cutoff");
+    }
+    return;
+  }
+
+  alert("Cutoff finalized. You can no longer edit days in this range.");
+  loadRange();
+}
+
+/* =====================
+   INIT
+===================== */
+buildCutoffOptions();
+loadRange();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>File Day-Off</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+body {
+  font-family: system-ui, sans-serif;
+  background: #f4f6f8;
+  margin: 0;
+}
+.container {
+  max-width: 500px;
+  margin: 40px auto;
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+}
+label {
+  display: block;
+  margin-top: 15px;
+  font-weight: 600;
+}
+input, textarea, button {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px;
+  font-size: 16px;
+}
+button {
+  background: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+button:hover {
+  background: #1e40af;
+}
+</style>
+</head>
+
+<body>
+
+<!-- NAV: defines window.user + authHeaders() -->
+<script src="/nav.js"></script>
+
+<div class="container">
+  <h2>📅 File Day-Off</h2>
+
+  <label>Date</label>
+  <input type="date" id="offDate">
+
+  <label>Reason (optional)</label>
+  <textarea id="reason" rows="4"></textarea>
+
+  <button onclick="submitDayOff()">Submit</button>
+</div>
+
+<script>
+/* =====================
+   AUTH GUARD
+===================== */
+if (!window.user || window.user.role !== "employee") {
+  location.href = "/login.html";
+}
+
+/* =====================
+   SUBMIT DAY-OFF
+===================== */
+async function submitDayOff() {
+  const off_date = document.getElementById("offDate").value;
+  const reason = document.getElementById("reason").value;
+
+  if (!off_date) {
+    alert("Select a date");
+    return;
+  }
+
+  const res = await fetch("/day-off", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      off_date,
+      reason
+    })
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (res.status === 401 || res.status === 403) {
+    // token invalid/expired → force login
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  if (!res.ok) {
+    alert(data.error || "Failed to file day-off");
+    return;
+  }
+
+  alert("Day-off filed and pending approval");
+  location.href = "/calendar.html";
+}
+</script>
+
+</body>
+</html>

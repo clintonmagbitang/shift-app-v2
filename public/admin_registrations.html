@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Admin – Registration Approvals</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: #f4f6f8;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 30px auto;
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    }
+
+    h1 {
+      margin-top: 0;
+      font-size: 22px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+    }
+
+    th, td {
+      border: 1px solid #e5e7eb;
+      padding: 10px;
+      text-align: left;
+      font-size: 14px;
+    }
+
+    th {
+      background: #f1f5f9;
+      font-weight: 600;
+    }
+
+    button {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .approve {
+      background: #22c55e;
+      color: white;
+    }
+
+    .empty {
+      text-align: center;
+      color: #6b7280;
+      padding: 20px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Pending Registrations</h1>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Email</th>
+        <th>Date Hired</th>
+        <th>Registered At</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody id="rows">
+      <tr>
+        <td colspan="5">Loading…</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- NAV BAR (defines window.user and authHeaders) -->
+<script src="/nav.js"></script>
+
+<script>
+/* =====================
+   AUTH GUARD (use nav.js)
+===================== */
+if (!window.user || window.user.role !== "admin") {
+  location.href = "/login.html";
+}
+
+/* =====================
+   LOAD PENDING USERS
+===================== */
+async function loadPending() {
+  const tbody = document.getElementById("rows");
+  tbody.innerHTML = "";
+
+  const res = await fetch("/admin/pending-users", {
+    headers: authHeaders()
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    // token invalid / expired → kick back to login
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  const data = await res.json();
+
+  if (!Array.isArray(data) || data.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="5" class="empty">
+          No pending registrations
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  data.forEach(u => {
+    const tr = document.createElement("tr");
+
+    tr.innerHTML = `
+      <td>${u.name}</td>
+      <td>${u.email}</td>
+      <td>${u.date_hired ? new Date(u.date_hired).toLocaleDateString() : ""}</td>
+      <td>${new Date(u.created_at).toLocaleDateString()}</td>
+      <td>
+        <button class="approve" onclick="approve(${u.id})">
+          Approve
+        </button>
+      </td>
+    `;
+
+    tbody.appendChild(tr);
+  });
+}
+
+/* =====================
+   APPROVE USER
+===================== */
+async function approve(id) {
+  if (!confirm("Approve this registration?")) return;
+
+  const res = await fetch("/admin/approve-user", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ user_id: id })
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  loadPending();
+}
+
+/* =====================
+   INIT
+===================== */
+loadPending();
+</script>
+
+</body>
+</html>

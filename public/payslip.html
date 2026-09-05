@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>My Payslips</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: #f4f6f8;
+    }
+    .container {
+      max-width: 800px;
+      margin: auto;
+      padding: 20px;
+    }
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    button {
+      padding: 6px 10px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      background: #2563eb;
+      color: white;
+    }
+    small {
+      color: #6b7280;
+    }
+        .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-finalized {
+      background: #22c55e;
+      color: #ffffff;
+    }
+    .badge-draft {
+      background: #fee2e2;
+      color: #b91c1c;
+    }
+  </style>
+</head>
+
+<body>
+
+<!-- nav.js sets window.user and authHeaders() -->
+<script src="/nav.js"></script>
+
+<div class="container">
+  <h2>💵 My Payslips</h2>
+
+<div class="card" id="generatedCard">
+    Loading system payroll…
+  </div>
+
+  <h3 style="margin-top:20px;">📎 Uploaded Payslips</h3>
+  <div class="card" id="list">
+    Loading payslips…
+  </div>
+</div>
+
+<script>
+/* =====================
+   AUTH GUARD
+===================== */
+if (!window.user) {
+  location.href = "/login.html";
+}
+
+
+function formatMoney(v) {
+  return Number(v || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
+/* =====================
+   LOAD SYSTEM-GENERATED PAYROLL
+===================== */
+async function loadGeneratedPayrolls() {
+  const card = document.getElementById("generatedCard");
+  card.innerHTML = "Loading system payroll…";
+
+  const res = await fetch("/my-payrolls", {
+    headers: authHeaders()
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  const data = await res.json().catch(() => []);
+  card.innerHTML = "";
+
+  if (!Array.isArray(data) || data.length === 0) {
+    card.innerHTML = "<em>No system-generated payroll records yet.</em>";
+    return;
+  }
+
+  data.forEach(p => {
+    const div = document.createElement("div");
+    div.className = "row";
+
+    const statusClass = p.status === "finalized" ? "badge-finalized" : "badge-draft";
+    const statusLabel = p.status ? p.status.toUpperCase() : "DRAFT";
+
+    div.innerHTML = `
+      <div>
+        <strong>Cutoff: ${p.cutoff_from} to ${p.cutoff_to}</strong><br>
+        Net Pay: ₱${formatMoney(p.final_income)}<br>
+        <small>
+          Status:
+          <span class="badge ${statusClass}">${statusLabel}</span>
+          ${p.bank_ref ? `&nbsp;• Bank Ref: ${p.bank_ref}` : ""}
+        </small>
+      </div>
+    `;
+    card.appendChild(div);
+  });
+}
+
+/* =====================
+   LOAD PAYSLIPS
+===================== */
+async function loadPayslips() {
+  const list = document.getElementById("list");
+  list.innerHTML = "Loading payslips…";
+
+  const res = await fetch("/payslips", {
+    headers: authHeaders()
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  const data = await res.json();
+  list.innerHTML = "";
+
+  if (!Array.isArray(data) || data.length === 0) {
+    list.innerHTML = "<em>No payslips uploaded yet.</em>";
+    return;
+  }
+
+  data.forEach(p => {
+    const div = document.createElement("div");
+    div.className = "row";
+    div.innerHTML = `
+      <div>
+        <strong>${p.original_name}</strong><br>
+        <small>${new Date(p.created_at).toLocaleDateString()}</small>
+      </div>
+      <button onclick="downloadPayslip(${p.id})">Download</button>
+    `;
+    list.appendChild(div);
+  });
+}
+
+/* =====================
+   DOWNLOAD WITH TOKEN
+===================== */
+async function downloadPayslip(id) {
+  try {
+    const res = await fetch(`/payslips/${id}/download`, {
+      headers: authHeaders()
+    });
+
+    if (res.status === 401 || res.status === 403) {
+      alert("Session expired. Please log in again.");
+      localStorage.removeItem("user");
+      location.href = "/login.html";
+      return;
+    }
+
+    if (!res.ok) {
+      const text = await res.text();
+      console.error("Download failed:", res.status, text);
+      alert("Download failed");
+      return;
+    }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    // filename will usually come from Content-Disposition header,
+    // so we don't need to set a.download explicitly.
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error("Download error:", err);
+    alert("Download failed");
+  }
+}
+
+loadGeneratedPayrolls();
+loadPayslips();
+</script>
+
+</body>
+</html>

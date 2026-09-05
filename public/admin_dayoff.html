@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Admin – Day-Off Approvals</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+<style>
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: #f4f6f8;
+}
+
+.container {
+  padding: 16px;
+  max-width: 1000px;
+  margin: auto;
+}
+
+h2 {
+  margin-bottom: 12px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+}
+
+th, td {
+  border: 1px solid #ddd;
+  padding: 10px;
+  text-align: left;
+}
+
+th {
+  background: #f1f5f9;
+}
+
+.status {
+  font-weight: 600;
+}
+
+.pending {
+  color: #b91c1c;
+}
+
+.approved {
+  color: #92400e;
+}
+
+.rejected {
+  color: #374151;
+}
+
+button {
+  padding: 6px 10px;
+  margin-right: 6px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.approve {
+  background: #facc15;
+}
+
+.reject {
+  background: #e5e7eb;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+  <h2>Day-Off Requests</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Employee</th>
+        <th>Date</th>
+        <th>Status</th>
+        <th>Reason (Admin Only)</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="dayOffTable"></tbody>
+  </table>
+</div>
+
+<!-- NAV (defines window.user + authHeaders) -->
+<script src="/nav.js"></script>
+
+<script>
+/* =====================
+   AUTH GUARD
+===================== */
+if (!window.user || window.user.role !== "admin") {
+  location.href = "/login.html";
+}
+
+/* =====================
+   LOAD DAY-OFFS
+===================== */
+async function loadDayOffs() {
+  const tbody = document.getElementById("dayOffTable");
+  tbody.innerHTML = "";
+
+  const res = await fetch("/admin/day-offs", {
+    headers: authHeaders()
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  const rows = await res.json();
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5">No day-off requests</td></tr>`;
+    return;
+  }
+
+  rows.forEach(d => {
+    const tr = document.createElement("tr");
+
+    tr.innerHTML = `
+      <td>${d.name}</td>
+      <td>${new Date(d.off_date).toLocaleDateString()}</td>
+      <td class="status ${d.status}">${d.status}</td>
+      <td>${d.reason || "-"}</td>
+      <td></td>
+    `;
+
+    const actionTd = tr.querySelector("td:last-child");
+
+    if (d.status === "pending") {
+      const approveBtn = document.createElement("button");
+      approveBtn.className = "approve";
+      approveBtn.textContent = "Approve";
+      approveBtn.onclick = () => approveDayOff(d.id);
+
+      const rejectBtn = document.createElement("button");
+      rejectBtn.className = "reject";
+      rejectBtn.textContent = "Reject";
+      rejectBtn.onclick = () => rejectDayOff(d.id);
+
+      actionTd.appendChild(approveBtn);
+      actionTd.appendChild(rejectBtn);
+    } else {
+      actionTd.textContent = "-";
+    }
+
+    tbody.appendChild(tr);
+  });
+}
+
+/* =====================
+   ACTIONS
+===================== */
+async function approveDayOff(id) {
+  const res = await fetch("/admin/day-off/approve", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ id })
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  // refresh calendar if open
+  if (window.opener && window.opener.loadShifts) {
+    window.opener.loadShifts();
+  }
+
+  loadDayOffs();
+}
+
+async function rejectDayOff(id) {
+  const res = await fetch("/admin/day-off/reject", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ id })
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    location.href = "/login.html";
+    return;
+  }
+
+  if (window.opener && window.opener.loadShifts) {
+    window.opener.loadShifts();
+  }
+
+  loadDayOffs();
+}
+
+/* =====================
+   INIT
+===================== */
+loadDayOffs();
+</script>
+
+</body>
+</html>

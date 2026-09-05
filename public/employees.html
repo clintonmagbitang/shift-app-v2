@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Employee Masterlist</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: #f4f6f8;
+    }
+
+    .container {
+      padding: 20px;
+      max-width: 1400px;
+      margin: auto;
+    }
+
+    h1 { margin-top: 0; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+      min-width: 1200px;
+    }
+
+    th, td {
+      border: 1px solid #e5e7eb;
+      padding: 10px;
+      font-size: 14px;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: #f1f5f9;
+      font-weight: 600;
+    }
+
+    .active { color: #16a34a; font-weight: 600; }
+    .inactive { color: #dc2626; font-weight: 600; }
+
+    .bank {
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    button {
+      padding: 6px 10px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .deactivate { background: #ef4444; color: white; }
+    .activate { background: #22c55e; color: white; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Employee Masterlist</h1>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Employee ID</th>
+        <th>Name</th>
+        <th>Email</th>
+        <th>Role</th>
+        <th>Phone</th>
+        <th>Date Hired</th>
+        <th>Employment</th>
+        <th>Bank Details</th>
+        <th>Status</th>
+        <th>Bank Details</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody id="tbody">
+      <tr><td colspan="11">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script src="/nav.js"></script>
+
+<script>
+/* =====================
+   AUTH GUARD (after nav.js)
+===================== */
+if (!window.user || window.user.role !== "admin") {
+  window.location.href = "/login.html";
+}
+
+/* =====================
+   LOAD EMPLOYEES
+===================== */
+async function loadEmployees() {
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = "";
+
+  const res = await fetch("/employees", {
+    headers: window.authHeaders()
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    window.location.href = "/login.html";
+    return;
+  }
+
+  const data = await res.json();
+
+  if (!Array.isArray(data) || data.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="11">No employees found</td></tr>`;
+    return;
+  }
+
+  data.forEach(e => {
+    const tr = document.createElement("tr");
+    const isActive = e.status === "active";
+
+    let bankHTML = "—";
+    if (Array.isArray(e.bank_accounts) && e.bank_accounts.length) {
+      bankHTML = e.bank_accounts.map(b => `
+        <div class="bank">
+          <strong>${b.bank_name || ""}</strong><br>
+          ${b.account_name || ""}<br>
+          ${b.account_number || ""}
+        </div>
+      `).join("<hr>");
+    }
+
+    tr.innerHTML = `
+      <td>${e.employee_id || ""}</td>
+      <td>${e.name || ""}</td>
+      <td>${e.email || ""}</td>
+      <td>${e.role || ""}</td>
+      <td>${e.phone || ""}</td>
+      <td>${e.date_hired ? new Date(e.date_hired).toLocaleDateString() : ""}</td>
+      <td>${e.employment_type || ""}</td>
+
+      <td>
+        ${
+          e.bank_accounts?.length
+            ? e.bank_accounts.map(b =>
+                `<div>${b.bank_name}: ${b.account_name} (${b.account_number})</div>`
+              ).join("")
+            : "<em>No bank details</em>"
+        }
+      </td>
+
+      <td class="${isActive ? "active" : "inactive"}">
+        ${isActive ? "Active" : "Inactive"}
+      </td>
+
+      <td>${bankHTML}</td>
+
+      <td>
+        ${
+          isActive
+            ? `<button class="deactivate" onclick="toggleUser(${e.id}, 'inactive')">Deactivate</button>`
+            : `<button class="activate" onclick="toggleUser(${e.id}, 'active')">Activate</button>`
+        }
+      </td>
+    `;
+
+    tbody.appendChild(tr);
+  });
+}
+
+/* =====================
+   TOGGLE STATUS
+===================== */
+async function toggleUser(id, status) {
+  if (!confirm(`Are you sure you want to set this user to ${status}?`)) return;
+
+  const res = await fetch("/admin/toggle-user", {
+    method: "POST",
+    headers: window.authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ user_id: id, status })
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem("user");
+    window.location.href = "/login.html";
+    return;
+  }
+
+  loadEmployees();
+}
+
+loadEmployees();
+</script>
+
+</body>
+</html>

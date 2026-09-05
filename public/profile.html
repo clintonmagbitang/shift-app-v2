@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>My Profile</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+<style>
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: #f4f6f8;
+}
+
+.container {
+  max-width: 720px;
+  margin: auto;
+  padding: 20px;
+}
+
+h2 {
+  margin-top: 0;
+}
+
+.card {
+  background: white;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.field {
+  margin-bottom: 10px;
+}
+
+.label {
+  font-size: 13px;
+  color: #374151;
+}
+
+.value {
+  font-weight: 600;
+}
+
+label {
+  display: block;
+  font-size: 13px;
+  margin-top: 10px;
+}
+
+input, select {
+  width: 100%;
+  padding: 8px;
+  margin-top: 4px;
+  font-size: 14px;
+}
+
+button {
+  margin-top: 12px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.save {
+  background: #2563eb;
+  color: white;
+}
+
+.delete {
+  background: #ef4444;
+  color: white;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.bank-item {
+  padding: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+</style>
+</head>
+
+<body>
+
+<!-- nav.js defines window.user + authHeaders() -->
+<script src="/nav.js"></script>
+
+<div class="container">
+
+  <h2>👤 My Profile</h2>
+
+  <!-- PROFILE INFO -->
+  <div class="card">
+    <div class="field">
+      <div class="label">Name</div>
+      <div class="value" id="name"></div>
+    </div>
+
+    <div class="field">
+      <div class="label">Role</div>
+      <div class="value" id="role"></div>
+    </div>
+
+    <div class="field">
+      <div class="label">Status</div>
+      <div class="value" id="status"></div>
+    </div>
+  </div>
+
+  <!-- BANK ACCOUNTS -->
+  <div class="card">
+    <h3>🏦 Bank Accounts</h3>
+
+    <div id="banks">
+      Loading bank accounts…
+    </div>
+
+    <hr>
+
+    <label>Bank</label>
+    <select id="bank_name">
+      <option value="BDO Network Bank">BDO Network Bank</option>
+      <option value="GCash">GCash</option>
+      <option value="Others">Others</option>
+    </select>
+
+    <label>Account Name</label>
+    <input id="account_name" placeholder="Account holder name">
+
+    <label>Account Number</label>
+    <input id="account_number" placeholder="Account number">
+
+    <button class="save" onclick="addBank()">Add Bank</button>
+  </div>
+
+</div>
+
+<script>
+/* =====================
+   AUTH GUARD
+===================== */
+if (!window.user) {
+  location.href = "/login.html";
+}
+
+let currentBanks = [];
+
+/* =====================
+   LOAD PROFILE
+===================== */
+async function loadProfile() {
+  try {
+    // Profile (no banks on this endpoint)
+    const res = await fetch(`/employee/${window.user.id}`, {
+      headers: authHeaders()
+    });
+
+    if (res.status === 401 || res.status === 403) {
+      alert("Session expired. Please log in again.");
+      localStorage.removeItem("user");
+      location.href = "/login.html";
+      return;
+    }
+
+    if (!res.ok) {
+      console.error("Profile load error:", res.status, await res.text());
+      alert("Failed to load profile");
+      return;
+    }
+
+    const data = await res.json();
+
+    document.getElementById("name").textContent   = data.name   || "";
+    document.getElementById("role").textContent   = data.role   || "";
+    document.getElementById("status").textContent = data.status || "";
+
+    // Then load banks from the dedicated endpoint
+    await loadBanks();
+  } catch (err) {
+    console.error("Profile error:", err);
+    alert("Failed to load profile");
+  }
+}
+
+/* =====================
+   LOAD + RENDER BANKS
+===================== */
+async function loadBanks() {
+  try {
+    const res = await fetch(`/employee/${window.user.id}/banks`, {
+      headers: authHeaders()
+    });
+
+    if (!res.ok) {
+      console.error("Banks load error:", res.status, await res.text());
+      document.getElementById("banks").innerHTML =
+        "<em>Failed to load bank accounts</em>";
+      return;
+    }
+
+    const list = await res.json();
+    currentBanks = Array.isArray(list) ? list : [];
+    renderBanks();
+  } catch (err) {
+    console.error("Banks error:", err);
+    document.getElementById("banks").innerHTML =
+      "<em>Failed to load bank accounts</em>";
+  }
+}
+
+function renderBanks() {
+  const banks = document.getElementById("banks");
+  banks.innerHTML = "";
+
+  if (!currentBanks.length) {
+    banks.innerHTML = "<em>No bank accounts added</em>";
+    return;
+  }
+
+  currentBanks.forEach(b => {
+    const div = document.createElement("div");
+    div.className = "bank-item";
+    div.innerHTML = `
+      <strong>${b.bank_name || ""}</strong><br>
+      ${b.account_name || ""}<br>
+      ${b.account_number || ""}<br>
+      <button class="delete" onclick="deleteBank(${b.id})">Remove</button>
+    `;
+    banks.appendChild(div);
+  });
+}
+
+/* =====================
+   ADD BANK (REPLACE-LIST API)
+===================== */
+async function addBank() {
+  const bank_name      = document.getElementById("bank_name").value;
+  const account_name   = document.getElementById("account_name").value.trim();
+  const account_number = document.getElementById("account_number").value.trim();
+
+  if (!account_name || !account_number) {
+    alert("Account name and number are required");
+    return;
+  }
+
+  // Build new list (API expects full list)
+  const updated = [
+    ...currentBanks.map(b => ({
+      bank_name: b.bank_name,
+      account_name: b.account_name,
+      account_number: b.account_number
+    })),
+    { bank_name, account_name, account_number }
+  ];
+
+  const res = await fetch(`/employee/${window.user.id}/banks`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ rows: updated })
+  });
+
+  if (!res.ok) {
+    console.error("Add bank error:", res.status, await res.text());
+    alert("Failed to save bank accounts");
+    return;
+  }
+
+  document.getElementById("account_name").value = "";
+  document.getElementById("account_number").value = "";
+
+  await loadBanks();
+}
+
+/* =====================
+   DELETE BANK (REPLACE-LIST API)
+===================== */
+async function deleteBank(id) {
+  if (!confirm("Remove this bank account?")) return;
+
+  const updated = currentBanks
+    .filter(b => b.id !== id)
+    .map(b => ({
+      bank_name: b.bank_name,
+      account_name: b.account_name,
+      account_number: b.account_number
+    }));
+
+  const res = await fetch(`/employee/${window.user.id}/banks`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ rows: updated })
+  });
+
+  if (!res.ok) {
+    console.error("Delete bank error:", res.status, await res.text());
+    alert("Failed to update bank accounts");
+    return;
+  }
+
+  await loadBanks();
+}
+
+/* =====================
+   INIT
+===================== */
+loadProfile();
+</script>
+
+</body>
+</html>

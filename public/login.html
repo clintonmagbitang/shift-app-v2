@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Login</title>
+
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+  <div class="container">
+    <h2>Employee Login</h2>
+
+    <div>
+      <input id="email" type="email" placeholder="Email" required />
+      <input id="password" type="password" placeholder="Password" required />
+      <button id="loginBtn" type="button">Login</button>
+      <p id="error" style="color:red"></p>
+    </div>
+
+    <hr style="margin:20px 0" />
+
+    <p>
+      New employee?
+      <a href="/register.html">Register here</a>
+    </p>
+  </div>
+
+  <script>
+    console.log("[login] script loaded");
+
+    const emailInput = document.getElementById("email");
+    const passwordInput = document.getElementById("password");
+    const loginBtn = document.getElementById("loginBtn");
+    const errorEl = document.getElementById("error");
+
+    async function doLogin() {
+      errorEl.textContent = "";
+
+      const email = emailInput.value.trim();
+      const password = passwordInput.value;
+
+      if (!email || !password) {
+        errorEl.textContent = "Email and password are required.";
+        return;
+      }
+
+      console.log("[login] sending /login request for", email);
+
+      try {
+        const res = await fetch("/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password })
+        });
+
+        let data;
+        try {
+          data = await res.json();
+        } catch (err) {
+          console.error("[login] JSON error:", err);
+          errorEl.textContent = "Server returned invalid response.";
+          return;
+        }
+
+        console.log("[login] response:", res.status, data);
+
+        if (!res.ok || data.error) {
+          errorEl.textContent = data.error || "Login failed.";
+          return;
+        }
+
+        // data = { token, user: { id, name, role, status } }
+        localStorage.setItem(
+          "user",
+          JSON.stringify({
+            user: {
+              id: data.user.id,
+              name: data.user.name,
+              role: data.user.role,
+              status: data.user.status
+            },
+            token: data.token
+          })
+        );
+
+        window.location.href = "/calendar.html";
+      } catch (err) {
+        console.error("[login] fetch error:", err);
+        errorEl.textContent = "Login failed. Please try again.";
+      }
+    }
+
+    loginBtn.addEventListener("click", doLogin);
+
+    // Allow Enter key to trigger login
+    passwordInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") doLogin();
+    });
+    emailInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") doLogin();
+    });
+  </script>
+
+</body>
+</html>
