@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "start:v2": "node scripts/start-v2.js",
+    "migrate:v2": "node scripts/migrate-v2.js",
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",

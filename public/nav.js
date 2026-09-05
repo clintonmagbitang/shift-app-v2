@@ -87,10 +87,12 @@ if (currentUser) {
   }
 
   // Common link
+  navLinks.innerHTML += link("/dashboard.html", "Dashboard");
   navLinks.innerHTML += link("/calendar.html", "Calendar");
 
   if (currentUser.role === "employee") {
     navLinks.innerHTML += link("/my_shifts.html", "My Shifts");
+    navLinks.innerHTML += link("/payslip.html", "My Payroll");
     navLinks.innerHTML += link("/timesheets.html", "Timesheet");
     navLinks.innerHTML += link("/dayoff.html", "Day-Off");
     navLinks.innerHTML += link("/payslip.html", "Payslips");
@@ -108,6 +110,9 @@ if (currentUser) {
     navLinks.innerHTML += link("/payroll.html", "Payroll");
     navLinks.innerHTML += link("/admin_payslips.html", "Payslips");
   }
+
+  navLinks.innerHTML += link("/advances.html", "Advances");
+  navLinks.innerHTML += link("/loans.html", "Loans");
 
   const right = document.createElement("div");
   right.style.marginLeft = "auto";

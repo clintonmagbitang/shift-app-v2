@@ -48,6 +48,8 @@ app.use(express.json());
 // ✅ SERVE STATIC HTML/CSS/JS
 app.use(express.static(path.join(__dirname, "public")));
 
+app.get('/healthz', (req,res) => res.json({ok:true}));
+
 // ✅ DEFAULT PAGE
 app.get("/", (req, res) => res.redirect("/login.html"));
 
@@ -100,6 +102,14 @@ function requireAdmin(req, res, next) {
   }
   next();
 }
+
+app.use('/api/v2/loans', require('./server/loans').loansRouter({
+  sql, requireAuth, requireAdmin, enabled: process.env.V2_ADVANCES_ENABLED === 'true'
+}));
+
+app.use('/api/v2/advances', require('./server/advances').advancesRouter({
+  sql, requireAuth, requireAdmin, enabled: process.env.V2_ADVANCES_ENABLED === 'true'
+}));
 
 /* =========================
    UPLOAD CONFIGS
@@ -1846,7 +1856,7 @@ app.get("/me", requireAuth, async (req, res) => {
 // ==========================
 // ADMIN – PAYROLL PREVIEW
 // ==========================
-app.get("/admin/payroll-preview", requireAuth, requireAdmin, async (req, res) => {
+async function computePayrollPreview(req, res) {
   const { user_id, from, to } = req.query;
 
   if (!user_id || !from || !to) {
@@ -2281,13 +2291,23 @@ app.get("/admin/payroll-preview", requireAuth, requireAdmin, async (req, res) =>
     console.error("PAYROLL PREVIEW ERROR:", err);
     res.status(500).json({ error: "Failed to generate payroll" });
   }
-});
+}
+
+
 
 // ==========================
 // ADMIN – PAYROLL FINALIZE / UNLOCK
 // ==========================
 
+const payrollV2 = process.env.V2_ADVANCES_ENABLED === 'true'
+  ? require('./server/payroll').createPayroll({ connectionString: process.env.DATABASE_URL, compute: computePayrollPreview }) : null;
+app.get('/admin/payroll-preview', requireAuth, requireAdmin, (req,res) => payrollV2 ? payrollV2.preview(req,res) : computePayrollPreview(req,res));
+app.get('/api/v2/my-payroll', requireAuth, (req,res) => payrollV2 ? payrollV2.preview(req,res) : res.status(503).json({error:'V2 payroll is unavailable.'}));
+app.get('/api/v2/my-payroll-history', requireAuth, (req,res) => payrollV2 ? payrollV2.history(req,res) : res.status(503).json({error:'V2 payroll is unavailable.'}));
+app.post('/admin/payroll-draft', requireAuth, requireAdmin, (req,res) => payrollV2 ? payrollV2.save(req,res,false) : res.status(503).json({error:'V2 payroll is unavailable.'}));
+
 app.post("/admin/payroll-finalize", requireAuth, requireAdmin, async (req, res) => {
+  if (payrollV2) return payrollV2.save(req,res);
   const {
     user_id,
     from,
@@ -2378,6 +2398,7 @@ app.post("/admin/payroll-finalize", requireAuth, requireAdmin, async (req, res) 
 });
 
 app.post("/admin/payroll-unlock", requireAuth, requireAdmin, async (req, res) => {
+  if (payrollV2) return payrollV2.unlock(req,res);
   const { user_id, from, to } = req.body;
 
   if (!user_id || !from || !to) {

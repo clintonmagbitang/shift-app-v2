@@ -129,7 +129,7 @@
   .totals-row td {
     font-weight: 600;
     background: #f9fafb;
-  }  
+  }
 
     .status-pill {
     display: inline-block;
@@ -175,8 +175,8 @@
         <button onclick="generatePayroll()">Generate Payroll</button>
       </div>
     </div>
-    <p class="muted" style="margin-top:8px;">
-      Computation is per cutoff based on finalized timesheets & approved overtime.
+    <p id="payrollNotice" class="muted" style="margin-top:8px;">
+      V2 payroll is saved by cutoff. Employees see finalized records only.
     </p>
   </div>
 
@@ -259,8 +259,7 @@
 
         <h4 style="margin:0 0 6px 0;">Deductions / Adjustments</h4>
         <p class="muted">
-          Enter positive amounts for deductions (e.g. -₱ in net).  
-          For additions, you can enter a negative amount.
+          Enter deductions as positive amounts. Use Additional Adjustment to add to pay; a negative adjustment reduces pay.
         </p>
 
         <div class="summary-row">
@@ -268,7 +267,7 @@
             Vale Amortization<br>
             <small class="muted">Ref# <input id="valeRef" style="width:90px;"></small>
           </span>
-          <span>₱ <input id="valeAmt" class="inline-input" type="number" step="0.01" value="0" oninput="recalcNet()"></span>
+          <span>₱ <input id="valeAmt" class="inline-input" min="0" type="number" step="0.01" value="0" oninput="recalcNet()"></span>
         </div>
 
         <div class="summary-row">
@@ -276,20 +275,25 @@
             Loan Amortization<br>
             <small class="muted">Ref# <input id="loanRef" style="width:90px;"></small>
           </span>
-          <span>₱ <input id="loanAmt" class="inline-input" type="number" step="0.01" value="0" oninput="recalcNet()"></span>
+          <span>₱ <input id="loanAmt" class="inline-input" min="0" type="number" step="0.01" value="0" oninput="recalcNet()"></span>
         </div>
 
         <div class="summary-row">
           <span>
-            Other Adjustment<br>
+            Other Deduction<br>
             <small class="muted">Particulars <input id="otherPart" style="width:120px;"></small>
           </span>
-          <span>₱ <input id="otherAmt" class="inline-input" type="number" step="0.01" value="0" oninput="recalcNet()"></span>
+          <span>₱ <input id="otherAmt" class="inline-input" min="0" type="number" step="0.01" value="0" oninput="recalcNet()"></span>
         </div>
 
         <hr style="margin:12px 0;">
 
-        <div class="summary-row strong">
+        <div class="summary-row"><label for="withholding_tax">Withholding Tax</label><span>₱ <input id="withholding_tax" class="inline-input" min="0" type="number" step="0.01" value="0" oninput="recalcNet()"></span></div>
+<div class="summary-row"><label for="sss">SSS</label><span>₱ <input id="sss" class="inline-input" min="0" type="number" step="0.01" value="0" oninput="recalcNet()"></span></div>
+<div class="summary-row"><label for="philhealth">PhilHealth</label><span>₱ <input id="philhealth" class="inline-input" min="0" type="number" step="0.01" value="0" oninput="recalcNet()"></span></div>
+<div class="summary-row"><label for="pagibig">Pag-IBIG</label><span>₱ <input id="pagibig" class="inline-input" min="0" type="number" step="0.01" value="0" oninput="recalcNet()"></span></div>
+<div class="summary-row"><label for="other_adjustment">Additional Adjustment (+ adds to pay)</label><span>₱ <input id="other_adjustment" class="inline-input" type="number" step="0.01" value="0" oninput="recalcNet()"></span></div>
+<div class="summary-row"><label for="remarks">Remarks</label><textarea id="remarks" maxlength="500"></textarea></div><div class="summary-row strong">
           <span>Net Pay</span>
           <span id="netPay">₱0.00</span>
         </div>
@@ -310,6 +314,7 @@
         </div>
 
         <div style="margin-top:10px; display:flex; gap:8px; justify-content:flex-end;">
+          <button id="draftBtn" onclick="finalizePayroll(true)">Save Draft</button>
           <button id="finalizeBtn" onclick="finalizePayroll()">Finalize Payroll</button>
           <button id="unlockBtn" style="background:#dc2626; display:none;" onclick="unlockPayroll()">Unlock</button>
         </div>
@@ -326,7 +331,7 @@
           <span>₱ <input id="loanBal" class="inline-input" type="number" step="0.01" value="0"></span>
         </div>
         <p class="muted" style="margin-top:8px;">
-          For now these balances are manual (not stored). We can wire them to the DB later.
+          Current ledger balances, including finalized payroll deductions.
         </p>
       </div>
     </div>
@@ -334,410 +339,7 @@
   </div>
 </div>
 
-<script>
-/* =====================
-   AUTH
-===================== */
-if (!window.user || window.user.role !== "admin") {
-  location.href = "/login.html";
-}
-
-/* =====================
-   STATE
-===================== */
-let employeesById = {};
-let lastBaseIncome = 0;
-let lastLayout = "simple_cutoff";
-let currentPayrollContext = null;   // holds { employeeId, from, to, summary, layout, payroll_record }
-
-/* =====================
-   HELPERS
-===================== */
-function toISO(date) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
-function currency(n) {
-  n = Number(n || 0);
-  return "₱" + n.toFixed(2);
-}
-
-/* cutoff options: same pattern as other pages */
-function buildCutoffOptions() {
-  const sel = document.getElementById("cutoffSelect");
-  sel.innerHTML = "";
-
-  const today = new Date();
-  const monthsBack = 3;
-  const monthsAhead = 1;
-  const options = [];
-
-  for (let offset = -monthsBack; offset <= monthsAhead; offset++) {
-    const base = new Date(today.getFullYear(), today.getMonth() + offset, 1);
-    const y = base.getFullYear();
-    const m = base.getMonth();
-
-    const first = new Date(y, m, 1);
-    const fifteenth = new Date(y, m, 15);
-    const sixteenth = new Date(y, m, 16);
-    const last = new Date(y, m + 1, 0);
-
-    options.push({
-      label: `${first.toLocaleString(undefined, { month: "short" })} 1–15 ${y}`,
-      from: toISO(first),
-      to: toISO(fifteenth)
-    });
-
-    options.push({
-      label: `${sixteenth.toLocaleString(undefined, { month: "short" })} 16–${last.getDate()} ${y}`,
-      from: toISO(sixteenth),
-      to: toISO(last)
-    });
-  }
-
-  let selectedIndex = 0;
-  const todayISO = toISO(today);
-
-  options.forEach((c, idx) => {
-    const o = document.createElement("option");
-    o.value = `${c.from}|${c.to}`;
-    o.textContent = c.label;
-    sel.appendChild(o);
-
-    if (todayISO >= c.from && todayISO <= c.to) {
-      selectedIndex = idx;
-    }
-  });
-
-  sel.selectedIndex = selectedIndex;
-}
-
-function getSelectedCutoffRange() {
-  const sel = document.getElementById("cutoffSelect");
-  if (!sel.value) return null;
-  const [from, to] = sel.value.split("|");
-  return { from, to };
-}
-
-/* =====================
-   LOAD EMPLOYEES
-===================== */
-async function loadEmployees() {
-  const sel = document.getElementById("employeeSelect");
-  sel.innerHTML = `<option value="">Select employee</option>`;
-
-  const res = await fetch("/employees", { headers: authHeaders() });
-  if (!res.ok) return;
-
-  const data = await res.json();
-  data.forEach(e => {
-    employeesById[e.id] = e;
-    const opt = document.createElement("option");
-    opt.value = e.id;
-    opt.textContent = `${e.name} (${e.employee_id || "—"})`;
-    sel.appendChild(opt);
-  });
-}
-
-/* =====================
-   MAIN GENERATE
-===================== */
-async function generatePayroll() {
-  const empSel = document.getElementById("employeeSelect");
-  const empId = empSel.value;
-  if (!empId) {
-    alert("Select an employee");
-    return;
-  }
-
-  const range = getSelectedCutoffRange();
-  if (!range) {
-    alert("Select a cutoff");
-    return;
-  }
-  const { from, to } = range;
-
-  const params = new URLSearchParams({ user_id: empId, from, to });
-
-  const res = await fetch(`/admin/payroll-preview?${params.toString()}`, {
-    headers: authHeaders()
-  });
-
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    alert(payload.error || "Failed to generate payroll preview.");
-    return;
-  }
-
-  const { employee, days, summary, layout, payroll_record } = payload;
-  lastLayout = layout || "simple_cutoff";
-
-    // store context for finalize/unlock
-  currentPayrollContext = {
-    employeeId: Number(empId),
-    from,
-    to,
-    summary,
-    layout: lastLayout,
-    payroll_record
-  };
-  
-
-  // INFO CARD
-  document.getElementById("infoName").textContent      = employee.name || "";
-  document.getElementById("infoDailyRate").textContent = currency(employee.daily_rate || 0);
-  document.getElementById("infoPeriod").textContent    = `${employee.cutoff_from} to ${employee.cutoff_to}`;
-  document.getElementById("infoOTHrRate").textContent  = currency(employee.overtime_rate || 0);
-
-  document.getElementById("infoCard").style.display    = "block";
-  document.getElementById("dailyCard").style.display   = "block";
-  document.getElementById("summaryCard").style.display = "block";
-  document.getElementById("balanceCard").style.display = "block";
-
-  // DAILY BREAKDOWN
-  const tbody = document.getElementById("dailyRows");
-  tbody.innerHTML = "";
-
-  days.forEach(d => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-        <td>${d.date}</td>
-        <td>${d.attendance_label || (d.attendance || "").toUpperCase()}</td>
-        <td>${currency(d.basic_pay)}</td>
-        <td>${d.overtime_hours ? Number(d.overtime_hours).toFixed(2) : ""}</td>
-        <td>${d.overtime_hours ? currency(d.overtime_pay) : ""}</td>
-        <td>${currency(d.total_pay)}</td>
-    `;
-    tbody.appendChild(tr);
-    });
-    
-  // footer totals row
-  const totalRow = document.createElement("tr");
-  totalRow.className = "totals-row";
-  totalRow.innerHTML = `
-      <td colspan="2" style="text-align:right;">TOTAL</td>
-      <td>${currency(summary.total_basic)}</td>
-      <td></td>
-      <td>${currency(summary.total_overtime)}</td>
-      <td>${currency(summary.total_income)}</td>
-  `;
-  tbody.appendChild(totalRow);
-
-  // Hint text explaining logic
-  const hint = document.getElementById("dailyHint");
-  if (layout === "first_half_1_20") {
-    hint.textContent =
-      "Jan 1–5: absences show as negative (deduction for previously paid days). " +
-      "Jan 6–15: actual basic based on attendance. Jan 16–20: advance basic pay (assumed present). " +
-      "OT is paid only for approved OT in the 1–15 cutoff.";
-  } else if (layout === "second_half_16_5") {
-    hint.textContent =
-      "Jan 16–20: adjustments vs the previous advance (present full day = ₱0; absent = -daily rate). " +
-      "Jan 21–end: actual basic based on attendance. Feb 1–5: advance basic pay (assumed present). " +
-      "OT is paid only for approved OT within the 16–end cutoff.";
-  } else {
-    hint.textContent =
-      "Daily basic is based on attendance within the cutoff. Overtime uses approved OT hours only.";
-  }
-
-  // SUMMARY
-  document.getElementById("sumBasic").textContent  = currency(summary.total_basic);
-  document.getElementById("sumOT").textContent     = currency(summary.total_overtime);
-  document.getElementById("sumIncome").textContent = currency(summary.total_income);
-
-    lastBaseIncome = summary.total_income || 0;
-
-  const valeAmtEl  = document.getElementById("valeAmt");
-  const loanAmtEl  = document.getElementById("loanAmt");
-  const otherAmtEl = document.getElementById("otherAmt");
-  const valeRefEl  = document.getElementById("valeRef");
-  const loanRefEl  = document.getElementById("loanRef");
-  const otherPartEl = document.getElementById("otherPart");
-  const bankRefEl  = document.getElementById("bankRef");
-  const statusEl   = document.getElementById("payrollStatus");
-  const finalizeBtn = document.getElementById("finalizeBtn");
-  const unlockBtn   = document.getElementById("unlockBtn");
-
-  // default: everything editable, "Draft"
-  let status = "draft";
-
-  if (payload.payroll_record) {
-    const pr = payload.payroll_record;
-
-    // pre-fill adjustments & bank ref from stored record
-    valeAmtEl.value  = pr.vale_amount  != null ? pr.vale_amount  : 0;
-    loanAmtEl.value  = pr.loan_amount  != null ? pr.loan_amount  : 0;
-    otherAmtEl.value = pr.other_amount != null ? pr.other_amount : 0;
-
-    valeRefEl.value      = pr.vale_ref           || "";
-    loanRefEl.value      = pr.loan_ref           || "";
-    otherPartEl.value    = pr.other_particulars  || "";
-    bankRefEl.value      = pr.bank_ref           || "";
-
-    status = pr.status || "draft";
-
-    // If finalized, show stored net; otherwise, recalc from inputs
-    if (status === "finalized" && pr.final_income != null) {
-      document.getElementById("netPay").textContent = currency(pr.final_income);
-    } else {
-      recalcNet();
-    }
-  } else {
-    // no stored record yet
-    valeAmtEl.value  = 0;
-    loanAmtEl.value  = 0;
-    otherAmtEl.value = 0;
-
-    valeRefEl.value   = "";
-    loanRefEl.value   = "";
-    otherPartEl.value = "";
-    bankRefEl.value   = "";
-
-    recalcNet();
-  }
-
-  // status pill + button states
-  if (statusEl) {
-    statusEl.style.display = "inline-block";
-    statusEl.textContent = status.toUpperCase();
-    statusEl.classList.remove("status-finalized", "status-draft");
-    statusEl.classList.add(status === "finalized" ? "status-finalized" : "status-draft");
-  }
-
-  const isFinalized = status === "finalized";
-
-  // lock / unlock inputs
-  [
-    valeAmtEl, loanAmtEl, otherAmtEl,
-    valeRefEl, loanRefEl, otherPartEl, bankRefEl
-  ].forEach(el => {
-    if (el) el.disabled = isFinalized;
-  });
-
-  // buttons
-  if (finalizeBtn) {
-    finalizeBtn.style.display = isFinalized ? "none" : "inline-block";
-    finalizeBtn.disabled = isFinalized;
-  }
-
-  if (unlockBtn) {
-    unlockBtn.style.display = isFinalized ? "inline-block" : "none";
-  }
-}
-
-/* =====================
-   NET PAY RECALC
-===================== */
-function recalcNet() {
-  const base = lastBaseIncome || 0;
-
-  const vale  = parseFloat(document.getElementById("valeAmt").value  || "0");
-  const loan  = parseFloat(document.getElementById("loanAmt").value  || "0");
-  const other = parseFloat(document.getElementById("otherAmt").value || "0");
-
-  const net = base - vale - loan - other;
-  document.getElementById("netPay").textContent = currency(net);
-}
-
-/* =====================
-   FINALIZE / UNLOCK PAYROLL
-===================== */
-async function finalizePayroll() {
-  if (!currentPayrollContext) {
-    alert("Generate a payroll first.");
-    return;
-  }
-
-  const { employeeId, from, to, summary } = currentPayrollContext;
-
-  const valeAmt  = parseFloat(document.getElementById("valeAmt").value  || "0");
-  const loanAmt  = parseFloat(document.getElementById("loanAmt").value  || "0");
-  const otherAmt = parseFloat(document.getElementById("otherAmt").value || "0");
-
-  const valeRef   = document.getElementById("valeRef").value  || "";
-  const loanRef   = document.getElementById("loanRef").value  || "";
-  const otherPart = document.getElementById("otherPart").value || "";
-  const bankRef   = document.getElementById("bankRef").value  || "";
-
-  const base = summary.total_income || 0;
-  const net  = base - valeAmt - loanAmt - otherAmt;
-
-  if (!confirm(`Finalize payroll? Net pay will be ${currency(net)}.`)) {
-    return;
-  }
-
-  const body = {
-    user_id: employeeId,
-    from,
-    to,
-    final_basic: summary.total_basic || 0,
-    final_overtime: summary.total_overtime || 0,
-    final_income: net,          // NET PAY
-    vale_amount: valeAmt,
-    vale_ref: valeRef,
-    loan_amount: loanAmt,
-    loan_ref: loanRef,
-    other_amount: otherAmt,
-    other_particulars: otherPart,
-    bank_ref: bankRef
-  };
-
-  const res = await fetch("/admin/payroll-finalize", {
-    method: "POST",
-    headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(body)
-  });
-
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    alert(data.error || "Failed to finalize payroll.");
-    return;
-  }
-
-  alert("Payroll finalized.");
-  // reload to pick up stored status + values
-  generatePayroll();
-}
-
-async function unlockPayroll() {
-  if (!currentPayrollContext) {
-    alert("Generate a payroll first.");
-    return;
-  }
-
-  const { employeeId, from, to } = currentPayrollContext;
-
-  if (!confirm("Unlock this payroll so you can edit and re-finalize?")) {
-    return;
-  }
-
-  const body = { user_id: employeeId, from, to };
-
-  const res = await fetch("/admin/payroll-unlock", {
-    method: "POST",
-    headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(body)
-  });
-
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    alert(data.error || "Failed to unlock payroll.");
-    return;
-  }
-
-  alert("Payroll unlocked.");
-  generatePayroll();
-}
-
-/* =====================
-   INIT
-===================== */
-buildCutoffOptions();
-loadEmployees();
-</script>
+<script src="/payroll.js"></script>
 
 </body>
 </html>
