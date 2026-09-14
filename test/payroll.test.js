@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {createPayroll} = require('../server/payroll');
-function harness({from='2026-05-01',to='2026-05-15'}={}) {
+function harness({from='2026-05-01',to='2026-05-15',legacyRecord}={}) {
   let record, revision=0, posts=[];
   const query=async(sql,args=[])=>{
     if(sql.startsWith('SELECT ledger'))return {rows:[{ledger:'advances',balance:'500.00'},{ledger:'loans',balance:'7000.00'}]};
@@ -16,7 +16,7 @@ function harness({from='2026-05-01',to='2026-05-15'}={}) {
     return {rows:[]};
   };
   const client={query,release(){}};
-  const payroll=createPayroll({pool:{query,connect:async()=>client},compute:async(req,res)=>res.json({employee:{id:req.query.user_id},days:[{date:'2026-05-15'}],summary:{total_basic:10000,total_overtime:500,total_income:10500}})});
+  const payroll=createPayroll({pool:{query,connect:async()=>client},compute:async(req,res)=>res.json({employee:{id:req.query.user_id},days:[{date:'2026-05-15'}],payroll_record:legacyRecord,summary:{total_basic:10000,total_overtime:500,total_income:10500}})});
   async function call(method,body={},role='admin'){
     let code=200,data;const res={status(n){code=n;return this;},json(d){data=d;}};
     await payroll[method]({body,query:{user_id:2,from,to},user:{id:2,role}},res,...(method==='save'?[body.finalize===true,body.merge===true]:[]));return {code,data};
@@ -24,6 +24,14 @@ function harness({from='2026-05-01',to='2026-05-15'}={}) {
   return {call,posts};
 }
 const base={user_id:2,from:'2026-05-01',to:'2026-05-15',expected_revision:null,sss:500,vale_amount:1000,loan_amount:200,other_adjustment:50};
+test('autosave can edit an older payroll with NULL reference fields without replacing deductions',async()=>{
+  const h=harness({from:'2026-07-16',to:'2026-07-31',legacyRecord:{sss:350,philhealth:125,pagibig:100,vale_amount:0,loan_amount:2100,vale_ref:null,loan_ref:null,other_particulars:null,bank_ref:null,remarks:null}});
+  const saved=await h.call('save',{user_id:2,from:'2026-07-16',to:'2026-07-31',merge:true,changes:{vale_amount:'1000.00'}});
+  assert.equal(saved.code,200);assert.equal(saved.data.payroll_record.vale_amount,1000);
+  assert.equal(saved.data.payroll_record.sss,350);assert.equal(saved.data.payroll_record.philhealth,125);assert.equal(saved.data.payroll_record.pagibig,100);assert.equal(saved.data.payroll_record.loan_amount,2100);
+  for(const key of ['vale_ref','loan_ref','other_particulars','bank_ref','remarks'])assert.equal(saved.data.payroll_record[key],'');
+  assert.equal(h.posts.length,0);
+});
 test('worksheet and individual preview share deductions; finalize posts once at cutoff and freezes snapshot',async()=>{
   const h=harness();
   assert.equal((await h.call('save',base)).code,200);

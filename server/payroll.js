@@ -21,7 +21,8 @@ function adjustments(input) {
     result[key] = Number(value);
   }
   for (const key of ['vale_ref','loan_ref','other_particulars','bank_ref','remarks']) {
-    if (input[key] !== undefined && (typeof input[key] !== 'string' || input[key].length > 500)) throw new Error(`${key} must be at most 500 characters.`);
+    // Older payroll_cutoffs records use NULL for optional, blank references.
+    if (input[key] != null && (typeof input[key] !== 'string' || input[key].length > 500)) throw new Error(`${key} must be at most 500 characters.`);
     result[key] = input[key] || '';
   }
   return result;
