@@ -1,5 +1,6 @@
 const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
+const {payrollBasis,initialAmounts} = require('./payroll-defaults');
 const deductions = ['vale_amount','loan_amount','other_amount','withholding_tax','sss','philhealth','pagibig'];
 function context(input) {
   const userId = Number(input.user_id);
@@ -26,6 +27,12 @@ function adjustments(input) {
   return result;
 }
 function createPayroll({ connectionString, compute, pool = new Pool({ connectionString }) }) {
+  async function withBasis(ctx,payload) {
+    return {...payload,...await payrollBasis(pool,ctx)};
+  }
+  function initialRecord(payload,basis,ctx) {
+    return {...payload.payroll_record,...(ctx.from >= '2026-09-01' ? initialAmounts(basis) : {}),status:'draft'};
+  }
   async function calculation(ctx) {
     let code = 200; let payload;
     await compute({ query: { user_id: ctx.userId, from: ctx.from, to: ctx.to } }, {
@@ -38,31 +45,43 @@ function createPayroll({ connectionString, compute, pool = new Pool({ connection
     try {
       const ctx = context({ ...req.query, user_id: req.user.role === 'admin' ? req.query.user_id : req.user.id });
       const { rows } = await pool.query('SELECT status,snapshot,updated_at::text AS revision FROM payroll_records_v2 WHERE user_id=$1 AND cutoff_from=$2 AND cutoff_to=$3', [ctx.userId,ctx.from,ctx.to]);
-      if (rows.length && rows[0].status === 'finalized') return res.json({...rows[0].snapshot,revision:rows[0].revision});
+      if (rows.length && rows[0].status === 'finalized') return res.json(await withBasis(ctx,{...rows[0].snapshot,revision:rows[0].revision}));
       if (req.user.role !== 'admin') return res.status(404).json({ error: 'No finalized V2 payslip for this cutoff yet.' });
-      const payload = await calculation(ctx);
+      const payload = await withBasis(ctx,await calculation(ctx));
       // A legacy finalized record has no V2 posting or immutable daily snapshot.
-      payload.payroll_record = rows.length ? rows[0].snapshot.payroll_record : { ...payload.payroll_record, status: 'draft' };
+      payload.payroll_record = rows.length ? rows[0].snapshot.payroll_record : initialRecord(payload,payload,ctx);
       payload.revision = rows[0]?.revision ?? null;
       res.json(payload);
     } catch (error) { res.status(400).json({ error: error.message.startsWith('Invalid') || error.message.startsWith('Choose') ? error.message : 'Unable to load payroll for this cutoff.' }); }
   }
-  async function save(req, res, finalize = true) {
+  async function save(req, res, finalize = true, mergeChanges = false) {
     let ctx, values;
-    try { ctx = context(req.body); values = adjustments(req.body); }
+    try {
+      ctx = context(req.body);
+      if(mergeChanges) {
+        const changes=req.body.changes;
+        const allowed=Object.keys(adjustments({}));
+        if(!changes || typeof changes!=='object' || Array.isArray(changes) || !Object.keys(changes).length || Object.keys(changes).some(k=>!allowed.includes(k))) throw new Error('Choose valid payroll fields to update.');
+        adjustments(changes);
+      } else values = adjustments(req.body);
+    }
     catch (error) { return res.status(400).json({ error: error.message }); }
     let client;
     try {
       client = await pool.connect(); await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`payroll:${ctx.userId}:${ctx.from}:${ctx.to}`]);
-      const existing = await client.query('SELECT id,status,updated_at::text AS revision FROM payroll_records_v2 WHERE user_id=$1 AND cutoff_from=$2 AND cutoff_to=$3 FOR UPDATE', [ctx.userId,ctx.from,ctx.to]);
+      const existing = await client.query('SELECT id,status,snapshot,updated_at::text AS revision FROM payroll_records_v2 WHERE user_id=$1 AND cutoff_from=$2 AND cutoff_to=$3 FOR UPDATE', [ctx.userId,ctx.from,ctx.to]);
       if (existing.rows[0]?.status === 'finalized') {
         await client.query('ROLLBACK'); return res.status(409).json({ error: 'Payroll is finalized. Unlock it before making changes.' });
       }
-      if (req.body.expected_revision !== (existing.rows[0]?.revision ?? null)) {
+      if (!mergeChanges && req.body.expected_revision !== (existing.rows[0]?.revision ?? null)) {
         await client.query('ROLLBACK'); return res.status(409).json({error:'This payroll changed or needs refreshing. Reload the cutoff before saving.'});
       }
       const payload = await calculation(ctx);
+      if(mergeChanges) {
+        const previous=existing.rows[0]?.snapshot.payroll_record || initialRecord(payload,await payrollBasis(client,ctx),ctx);
+        values=adjustments({...previous,...req.body.changes});
+      }
       const cents = n => Math.round(Number(n) * 100);
       const basic = cents(payload.summary.total_basic), overtime = cents(payload.summary.total_overtime);
       const net = basic + overtime - deductions.reduce((sum,key) => sum+cents(values[key]),0) + cents(values.other_adjustment);
@@ -78,7 +97,7 @@ function createPayroll({ connectionString, compute, pool = new Pool({ connection
             VALUES($1,$2,'repayment',$3,$4,$5,$6,$7,$8)`, [ctx.userId,ctx.to,values[key],values[reference],`Payroll ${ctx.from} to ${ctx.to}`,req.user.id,randomUUID(),id]);
         }
       }
-      await client.query('COMMIT'); res.json({ ok: true, status, revision:saved.rows[0].revision, summary:payload.summary });
+      await client.query('COMMIT'); res.json({ ok: true, status, revision:saved.rows[0].revision, summary:payload.summary, payroll_record:payload.payroll_record });
     } catch { if (client) await client.query('ROLLBACK').catch(() => {}); res.status(500).json({ error: 'Payroll could not be saved. No partial ledger postings were kept.' }); }
     finally { if (client) client.release(); }
   }
@@ -105,6 +124,12 @@ function createPayroll({ connectionString, compute, pool = new Pool({ connection
       res.json(result.rows);
     } catch { res.status(500).json({error:'Unable to load payroll history.'}); }
   }
-  return { preview, save, unlock, history };
+  async function revisions(req,res) {
+    try {
+      const ctx=context({...req.query,user_id:1});
+      const result=await pool.query('SELECT user_id,updated_at::text AS revision FROM payroll_records_v2 WHERE cutoff_from=$1 AND cutoff_to=$2',[ctx.from,ctx.to]);res.json(result.rows);
+    } catch {res.status(400).json({error:'Unable to check payroll updates.'});}
+  }
+  return { preview, save, unlock, history, revisions };
 }
 module.exports = { createPayroll, context, adjustments };

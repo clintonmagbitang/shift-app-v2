@@ -15,6 +15,8 @@ let payrollGeneration = 0;
 let lastBaseIncome = 0;
 let lastLayout = "simple_cutoff";
 let currentPayrollContext = null;   // holds { employeeId, from, to, summary, layout, payroll_record }
+let individualSync = null;
+const payrollInputs = {valeAmt:'vale_amount',loanAmt:'loan_amount',otherAmt:'other_amount',valeRef:'vale_ref',loanRef:'loan_ref',otherPart:'other_particulars',bankRef:'bank_ref',withholding_tax:'withholding_tax',sss:'sss',philhealth:'philhealth',pagibig:'pagibig',other_adjustment:'other_adjustment',remarks:'remarks'};
 
 /* =====================
    HELPERS
@@ -311,6 +313,15 @@ async function generatePayroll() {
   if (unlockBtn) {
     unlockBtn.style.display = isFinalized && !readOnly ? "inline-block" : "none";
   }
+  if(generation===payrollGeneration && !readOnly) {
+    const ctx=currentPayrollContext;
+    individualSync=isFinalized?null:new PayrollSync.Draft({user_id:ctx.employeeId,from,to},(saved,pending)=>{
+      if(currentPayrollContext!==ctx)return;
+      ctx.revision=saved.revision;ctx.summary=saved.summary;ctx.payroll_record=saved.payroll_record;lastBaseIncome=saved.summary.total_income;
+      for(const [id,key] of Object.entries(payrollInputs))if(!(key in pending))document.getElementById(id).value=saved.payroll_record[key]??'';
+      document.getElementById('sumBasic').textContent=currency(saved.summary.total_basic);document.getElementById('sumOT').textContent=currency(saved.summary.total_overtime);document.getElementById('sumIncome').textContent=currency(saved.summary.total_income);recalcNet();
+    },message=>{if(currentPayrollContext===ctx)document.getElementById('payrollStatus').textContent=message;});
+  }
 }
 
 /* =====================
@@ -332,6 +343,7 @@ function recalcNet() {
 ===================== */
 async function finalizePayroll(draft = false) {
   if (readOnly) return;
+  if(!await flushIndividual())return;
   if (!currentPayrollContext) {
     alert("Generate a payroll first.");
     return;
@@ -387,6 +399,7 @@ async function finalizePayroll(draft = false) {
   }
 
   alert(draft ? "Draft saved." : "Payroll finalized.");
+  PayrollSync.notify();
   // reload to pick up stored status + values
   generatePayroll();
 }
@@ -419,6 +432,7 @@ async function unlockPayroll() {
   }
 
   alert("Payroll unlocked.");
+  PayrollSync.notify();
   generatePayroll();
 }
 
@@ -479,4 +493,22 @@ for (const actionName of ['finalizePayroll','unlockPayroll']) {
   };
 }
 const generateAction = generatePayroll;
-generatePayroll = async () => { try { await generateAction(); } catch { invalidatePayroll(); alert('Unable to load payroll. Please try again.'); } };
+generatePayroll = async () => { try { if(await flushIndividual())await generateAction(); } catch { invalidatePayroll(); alert('Unable to load payroll. Please try again.'); } };
+async function flushIndividual(){
+  if(readOnly)return true;
+  const invalid=document.querySelector('#summaryCard input:invalid');if(invalid){invalid.reportValidity();return false;}
+  return !individualSync || await individualSync.flush();
+}
+if(!readOnly){
+  for(const [id,key] of Object.entries(payrollInputs))document.getElementById(id).addEventListener('input',e=>{
+    if(currentPayrollContext && individualSync && !e.target.disabled && e.target.validity.valid)individualSync.edit(key,e.target.value || (e.target.type==='number'?'0':''));
+  });
+  window.addEventListener('beforeunload',e=>{if(individualSync?.dirty){e.preventDefault();e.returnValue='';}});
+  let checking=false;
+  async function checkUpdates(){
+    if(checking || document.hidden || !currentPayrollContext || individualSync?.dirty || payrollActionPending || ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName))return;
+    const ctx=currentPayrollContext;checking=true;
+    try{const res=await fetch(`/admin/payroll-revisions?from=${ctx.from}&to=${ctx.to}`,{headers:authHeaders()});if(!res.ok)return;const revisions=await res.json();const revision=revisions.find(r=>Number(r.user_id)===ctx.employeeId)?.revision??null;if(ctx===currentPayrollContext && ctx.revision!==revision)await generatePayroll();}catch{}finally{checking=false;}
+  }
+  PayrollSync.subscribe(checkUpdates);window.addEventListener('focus',checkUpdates);document.addEventListener('visibilitychange',checkUpdates);setInterval(checkUpdates,8000);
+}

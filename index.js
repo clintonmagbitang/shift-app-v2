@@ -2307,12 +2307,15 @@ async function computePayrollPreview(req, res) {
 // ==========================
 
 if (process.env.V2_ADVANCES_ENABLED === 'true') app.use('/api/v2/pay-rates', require('./server/pay-rates').payRatesRouter({connectionString:process.env.DATABASE_URL,requireAuth,requireAdmin}));
+if (process.env.V2_ADVANCES_ENABLED === 'true') app.use('/api/v2/withholding-defaults', require('./server/payroll-defaults').defaultsRouter({connectionString:process.env.DATABASE_URL,requireAuth,requireAdmin}));
 const payrollV2 = process.env.V2_ADVANCES_ENABLED === 'true'
   ? require('./server/payroll').createPayroll({ connectionString: process.env.DATABASE_URL, compute: computePayrollPreview }) : null;
 app.get('/admin/payroll-preview', requireAuth, requireAdmin, (req,res) => payrollV2 ? payrollV2.preview(req,res) : computePayrollPreview(req,res));
 app.get('/api/v2/my-payroll', requireAuth, (req,res) => payrollV2 ? payrollV2.preview(req,res) : res.status(503).json({error:'V2 payroll is unavailable.'}));
 app.get('/api/v2/my-payroll-history', requireAuth, (req,res) => payrollV2 ? payrollV2.history(req,res) : res.status(503).json({error:'V2 payroll is unavailable.'}));
 app.post('/admin/payroll-draft', requireAuth, requireAdmin, (req,res) => payrollV2 ? payrollV2.save(req,res,false) : res.status(503).json({error:'V2 payroll is unavailable.'}));
+app.post('/admin/payroll-fields', requireAuth, requireAdmin, (req,res) => payrollV2 ? payrollV2.save(req,res,false,true) : res.status(503).json({error:'V2 payroll is unavailable.'}));
+app.get('/admin/payroll-revisions', requireAuth, requireAdmin, (req,res) => payrollV2 ? payrollV2.revisions(req,res) : res.status(503).json({error:'V2 payroll is unavailable.'}));
 
 app.post("/admin/payroll-finalize", requireAuth, requireAdmin, async (req, res) => {
   if (payrollV2) return payrollV2.save(req,res);
