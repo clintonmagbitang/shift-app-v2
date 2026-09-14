@@ -1,4 +1,5 @@
 const express = require('express');
+const { ledgerAsOf } = require('./ledger-date');
 
 function validateTransaction(body) {
   const userId = Number(body.user_id);
@@ -26,12 +27,15 @@ function loansRouter({ sql, requireAuth, requireAdmin, enabled }) {
   });
   router.get('/employees', requireAdmin, async (req, res) => {
     try {
-      res.json(await sql`SELECT id, name FROM users WHERE role = 'employee' ORDER BY name, id`);
+      res.json(await sql`SELECT id, name FROM users WHERE role = 'employee' AND status = 'active' ORDER BY name, id`);
     } catch { res.status(500).json({ error: 'Unable to load employees.' }); }
   });
   router.get('/', async (req, res) => {
     const userId = req.user.role === 'admin' ? Number(req.query.user_id) : Number(req.user.id);
     if (!Number.isSafeInteger(userId) || userId < 1) return res.status(400).json({ error: 'Choose an employee.' });
+    let asOf;
+    try { asOf = ledgerAsOf(req.query.as_of); }
+    catch(error) { return res.status(400).json({error:error.message}); }
     try {
       const rows = await sql`
         SELECT id, transaction_date::text, type, amount::text, reference, remarks, is_opening,
@@ -46,8 +50,9 @@ function loansRouter({ sql, requireAuth, requireAdmin, enabled }) {
             ABS(balance) AS amount,'Opening balance' AS reference,'Closing balance as of April 30, 2026' AS remarks,true AS is_opening
           FROM employee_ledger_openings_v2 WHERE ledger = 'loans'
         ) ledger WHERE user_id = ${userId}
+          AND (${asOf}::date IS NULL OR transaction_date <= ${asOf}::date)
         ORDER BY transaction_date, id`;
-      res.json({ transactions: rows, balance: rows.length ? rows[rows.length - 1].balance : '0.00' });
+      res.json({ as_of: asOf, transactions: rows, balance: rows.length ? rows[rows.length - 1].balance : '0.00' });
     } catch { res.status(500).json({ error: 'Unable to load loans. Check that the V2 migration has been applied.' }); }
   });
   router.post('/opening', requireAdmin, async (req,res) => {

@@ -100,6 +100,7 @@ if (currentUser) {
 
   if (currentUser.role === "admin") {
     navLinks.innerHTML += link("/employees.html", "Employees");
+    navLinks.innerHTML += link("/payroll_worksheet.html", "Payroll Worksheet");
     navLinks.innerHTML += link("/admin_registrations.html", "Registrations");
     navLinks.innerHTML += link("/admin_timesheets.html", "Admin Timesheets");
     navLinks.innerHTML += link("/admin_approvals.html", "Claimed Shifts");

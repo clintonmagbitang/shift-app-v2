@@ -155,6 +155,7 @@
 
 <div class="container">
   <h1>🧾 Payroll Calculator</h1>
+  <p><a href="/payroll_worksheet.html">Open payroll worksheet — all employees in one table</a></p>
 
   <!-- FILTERS -->
   <div class="card">
@@ -321,7 +322,7 @@
       </div>
 
       <div class="card" id="balanceCard" style="display:none;">
-        <h3 style="margin-top:0;">Vale & Loan Balance</h3>
+        <h3 style="margin-top:0;">Vale & Loan Balance — As of Cutoff</h3>
         <div class="summary-row">
           <span>Vale Balance</span>
           <span>₱ <input id="valeBal" class="inline-input" type="number" step="0.01" value="0"></span>
@@ -330,8 +331,8 @@
           <span>Loan Balance</span>
           <span>₱ <input id="loanBal" class="inline-input" type="number" step="0.01" value="0"></span>
         </div>
-        <p class="muted" style="margin-top:8px;">
-          Current ledger balances, including finalized payroll deductions.
+        <p id="balanceAsOf" class="muted" style="margin-top:8px;">
+          Ledger balances as of the selected cutoff end.
         </p>
       </div>
     </div>

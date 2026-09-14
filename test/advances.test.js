@@ -22,7 +22,7 @@ async function harness(t, { role = 'employee', enabled = true, sql = async () =>
 test('employee cannot request another employee ledger', async t => {
   let values;
   const request = await harness(t, { sql: async (strings, ...args) => { values = args; return []; } });
-  const response = await request('?user_id=999'); assert.equal(response.status, 200); assert.deepEqual(values, [2]);
+  const response = await request('?user_id=999'); assert.equal(response.status, 200); assert.deepEqual(values, [2, null, null]);
 });
 test('employee cannot record transactions or list employees', async t => {
   const request = await harness(t, { sql: async () => { assert.fail('Database must not be queried'); } });

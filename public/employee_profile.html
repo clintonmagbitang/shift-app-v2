@@ -110,6 +110,13 @@
 
   <label>Daily Rate</label>
   <input id="daily_rate" type="number" step="0.01" />
+  <div id="rateSchedule" hidden>
+    <label for="rateEffective">New rate effective from</label>
+    <input id="rateEffective" type="date" min="2026-05-01" />
+    <button type="button" onclick="saveDatedRate()">Save dated pay rate</button>
+    <p>Enter the new daily rate above, choose its start date, then save it here. Profile Save does not change pay rates. Finalized payslips remain unchanged.</p>
+    <div id="rateHistory"></div>
+  </div>
 
   <button id="saveBtn">Save Profile</button>
 
@@ -183,7 +190,7 @@ async function loadEmployeeOptions() {
   const sel = document.getElementById("employeeSelect");
   sel.innerHTML = "";
 
-  const res = await fetch("/employees", { headers: authHeaders() });
+  const res = await fetch("/employees?active=true", { headers: authHeaders() });
 
   if (res.status === 401 || res.status === 403) {
     localStorage.removeItem("user");
@@ -234,6 +241,7 @@ async function loadProfile() {
   // 🔹 NEW: load daily_rate into the field
   document.getElementById("daily_rate").value =
     profile.daily_rate != null ? profile.daily_rate : "";
+  if (me.role === 'admin') await loadDatedRates();
 }
 
 /* =====================
@@ -381,5 +389,28 @@ document.getElementById("saveBtn").onclick = async () => {
 };
 </script>
 
+<script>
+async function loadDatedRates() {
+  const employeeId = currentEmployeeId;
+  const res = await fetch(`/api/v2/pay-rates/${employeeId}`, {headers:authHeaders()});
+  if (!res.ok) return;
+  const rates = await res.json();
+  if (employeeId !== currentEmployeeId) return;
+  document.getElementById('rateSchedule').hidden = false;
+  document.getElementById('rateHistory').textContent = rates.map(r => `${r.effective_from === '0001-01-01' ? 'Existing baseline' : r.effective_from}: ₱${Number(r.daily_rate).toFixed(2)}`).join(' • ');
+  const today = new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Manila'});
+  const current = rates.find(r => r.effective_from <= today);
+  if (current) document.getElementById('daily_rate').value = current.daily_rate;
+  document.getElementById('rateEffective').value = today;
+}
+async function saveDatedRate() {
+  try {
+    const res = await fetch(`/api/v2/pay-rates/${currentEmployeeId}`, {method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({daily_rate:document.getElementById('daily_rate').value,effective_from:document.getElementById('rateEffective').value})});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    await loadDatedRates(); alert('Dated pay rate saved.');
+  } catch(e) { alert(e.message || 'Unable to save rate.'); }
+}
+</script>
 </body>
 </html>

@@ -100,7 +100,7 @@ async function loadEmployees() {
   const sel = document.getElementById("employeeSelect");
   sel.innerHTML = `<option value="">Select employee</option>`;
 
-  const res = await fetch("/employees", { headers: authHeaders() });
+  const res = await fetch("/employees?active=true", { headers: authHeaders() });
   if (!res.ok) return;
 
   const data = await res.json();
@@ -156,13 +156,17 @@ async function generatePayroll() {
     to,
     summary,
     layout: lastLayout,
-    payroll_record
+    payroll_record,
+    revision: payload.revision
   };
   
 
   // INFO CARD
   document.getElementById("infoName").textContent      = employee.name || "";
   document.getElementById("infoDailyRate").textContent = currency(employee.daily_rate || 0);
+  if (new Set(days.filter(d=>d.daily_rate != null).map(d=>Number(d.daily_rate))).size > 1) {
+    document.getElementById("infoDailyRate").textContent += ' at cutoff; daily amounts use the effective rate for each date';
+  }
   document.getElementById("infoPeriod").textContent    = `${employee.cutoff_from} to ${employee.cutoff_to}`;
   document.getElementById("infoOTHrRate").textContent  = currency(employee.overtime_rate || 0);
 
@@ -288,10 +292,14 @@ async function generatePayroll() {
 
   for (const key of [...extraFields, 'remarks']) document.getElementById(key).disabled = isFinalized || readOnly;
   document.getElementById('draftBtn').style.display = isFinalized || readOnly ? 'none' : 'inline-block';
+  document.getElementById('balanceAsOf').textContent = `Balances as of ${to}, including ledger entries dated on or before this cutoff end.`;
   for (const [module,id] of [['advances','valeBal'],['loans','loanBal']]) {
     const field = document.getElementById(id); field.disabled = true; field.value = '';
-    try { const response = await fetch(`/api/v2/${module}?user_id=${encodeURIComponent(empId)}`, {headers:authHeaders()});
-      if (response.ok && currentPayrollContext?.employeeId === Number(empId)) field.value = (await response.json()).balance;
+    try { const response = await fetch(`/api/v2/${module}?user_id=${encodeURIComponent(empId)}&as_of=${encodeURIComponent(to)}`, {headers:authHeaders()});
+      if (response.ok) {
+        const data = await response.json();
+        if (generation === payrollGeneration) field.value = data.balance;
+      }
     } catch {}
   }
   // buttons
@@ -349,6 +357,7 @@ async function finalizePayroll(draft = false) {
 
   const body = {
     user_id: employeeId,
+    expected_revision: currentPayrollContext.revision,
     from,
     to,
     final_basic: summary.total_basic || 0,
@@ -428,7 +437,15 @@ function invalidatePayroll() {
 document.getElementById('employeeSelect').addEventListener('change',invalidatePayroll);
 document.getElementById('cutoffSelect').addEventListener('change',invalidatePayroll);
 buildCutoffOptions();
-loadEmployees();
+loadEmployees().then(() => {
+  if (readOnly) return;
+  const params = new URLSearchParams(location.search);
+  if (params.has('employee') && params.has('cutoff')) {
+    document.getElementById('employeeSelect').value = params.get('employee');
+    document.getElementById('cutoffSelect').value = params.get('cutoff');
+    if (document.getElementById('employeeSelect').value && document.getElementById('cutoffSelect').value) generatePayroll();
+  }
+});
 if (readOnly) {
   document.title = 'My Payslip';
   document.querySelector('h1').textContent = 'My Payslip';

@@ -11,6 +11,10 @@ Create a separate V2 web service from this repository first. Do not replace the 
 
 The V2 schema has already been applied to its Neon branch. Future migrations use `npm run migrate:v2` with the same hosted configuration.
 
+The payroll worksheet and dated-rate release requires migration `004_pay_rates.sql` before deploying. It adds a rate-history table and captures existing rates as the baseline without changing payroll snapshots or ledger entries. Rate changes are saved through the dated-rate action in employee profiles. Every payroll workday uses its effective rate; existing finalized snapshots remain immutable. Earlier rate changes that were never recorded cannot be reconstructed automatically.
+
+The worksheet and individual forms use the same draft/finalize routes. Saves include the revision returned by preview to reject stale edits. Reload forms opened before this release before saving. Worksheet batch actions save each employee independently and report failures on the affected row; successful employees remain saved. Reference and remarks columns can be expanded in the worksheet.
+
 Before changing the live employee portal, reconcile any V1 attendance or employee changes made since the V2 database branch was created. V1 and V2 do not synchronize automatically. Keep the V2 opening balances and payroll records when planning that transition.
 
 Existing uploaded payslip files live on disk, outside PostgreSQL. A new service does not automatically inherit V1's uploaded files. Durable upload storage must be configured if using file uploads in the hosted V2 service.

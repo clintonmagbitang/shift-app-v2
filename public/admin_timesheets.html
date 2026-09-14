@@ -417,7 +417,7 @@ async function loadEmployeeFilter() {
   const sel = document.getElementById("employeeFilter");
   sel.innerHTML = `<option value="">All employees</option>`;
 
-  const res = await fetch("/employees", { headers: authHeaders() });
+  const res = await fetch("/employees?active=true", { headers: authHeaders() });
   if (!res.ok) return;
 
   const data = await res.json();

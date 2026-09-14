@@ -460,6 +460,7 @@ app.get("/employees", requireAuth, requireAdmin, async (req, res) => {
       FROM users u
       LEFT JOIN user_bank_accounts b
         ON b.user_id = u.id
+      WHERE (${req.query.active === 'true'} = false OR (u.status = 'active' AND u.role = 'employee'))
       GROUP BY u.id
       ORDER BY u.created_at DESC
     `;
@@ -559,7 +560,7 @@ app.post("/employee/:id/update", requireAuth, async (req, res) => {
           employment_type = ${employment_type || null},
           role = ${role || 'employee'},
           status = ${status || 'active'},
-          daily_rate = ${daily_rate != null ? Number(daily_rate) : null},
+          daily_rate = CASE WHEN ${process.env.V2_ADVANCES_ENABLED === 'true'} THEN daily_rate ELSE ${daily_rate != null ? Number(daily_rate) : null} END,
           street = ${street || null},
           barangay = ${barangay || null},
           city = ${city || null},
@@ -1877,7 +1878,9 @@ async function computePayrollPreview(req, res) {
     }
 
     const emp = users[0];
-    const dailyRate = Number(emp.daily_rate || 0);
+    const rates = process.env.V2_ADVANCES_ENABLED === 'true' ? await sql`SELECT effective_from::text,daily_rate FROM employee_pay_rates_v2 WHERE user_id=${user_id}::int ORDER BY effective_from` : [];
+    const rateOn = require('./server/pay-rates').rateOn;
+    const dailyRate = rateOn(rates, to, emp.daily_rate);
 
     if (!dailyRate) {
       return res.status(400).json({
@@ -2092,6 +2095,9 @@ async function computePayrollPreview(req, res) {
     }
     // -------- main per-day logic --------
     for (const dateStr of dateRange(displayFrom, displayTo)) {
+      const dailyRate = rateOn(rates, dateStr, emp.daily_rate);
+      const hourlyRate = dailyRate / 8;
+      const overtimeRate = hourlyRate * 1.25;
       const jsDate  = new Date(dateStr + "T00:00:00");
       const dayNum  = jsDate.getDate();
       const ts      = map.get(dateStr) || null;
@@ -2228,6 +2234,7 @@ async function computePayrollPreview(req, res) {
 
       days.push({
         date: dateStr,
+        daily_rate: dailyRate,
         attendance,
         attendance_label: attendanceLabel,
         worked_hours: workedHours,
@@ -2299,6 +2306,7 @@ async function computePayrollPreview(req, res) {
 // ADMIN – PAYROLL FINALIZE / UNLOCK
 // ==========================
 
+if (process.env.V2_ADVANCES_ENABLED === 'true') app.use('/api/v2/pay-rates', require('./server/pay-rates').payRatesRouter({connectionString:process.env.DATABASE_URL,requireAuth,requireAdmin}));
 const payrollV2 = process.env.V2_ADVANCES_ENABLED === 'true'
   ? require('./server/payroll').createPayroll({ connectionString: process.env.DATABASE_URL, compute: computePayrollPreview }) : null;
 app.get('/admin/payroll-preview', requireAuth, requireAdmin, (req,res) => payrollV2 ? payrollV2.preview(req,res) : computePayrollPreview(req,res));

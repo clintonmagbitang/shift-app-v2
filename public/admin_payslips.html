@@ -129,7 +129,7 @@ const rows = document.getElementById("payslipRows");
    LOAD EMPLOYEES
 ===================== */
 async function loadEmployees() {
-  const res = await fetch("/employees", {
+  const res = await fetch("/employees?active=true", {
     headers: authHeaders()
   });
 
