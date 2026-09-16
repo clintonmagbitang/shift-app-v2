@@ -1504,6 +1504,7 @@ app.get("/timesheets/exists", requireAuth, async (req, res) => {
 // ADMIN – TIMESHEET VIEW / EXPORT / LOCK / OT
 // =========================
 
+app.delete('/admin/timesheets/:id', requireAuth, requireAdmin, require('./server/timesheet-delete').deleteTimesheet({sql}));
 app.get("/admin/timesheets", requireAuth, requireAdmin, async (req, res) => {
   const { from, to, user_id } = req.query;
   if (!from || !to) {

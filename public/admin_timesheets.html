@@ -135,12 +135,13 @@
         <th>OT Status / Action</th>
         <th>Locked</th>
         <th>Remarks</th>
+        <th>Delete</th>
       </tr>
     </thead>
 
     <tbody id="rows">
       <tr>
-        <td colspan="14" class="empty">Select a cutoff and load</td>
+        <td colspan="15" class="empty">Select a cutoff and load</td>
       </tr>
     </tbody>
   </table>
@@ -454,7 +455,7 @@ async function loadTimesheets() {
   if (!res.ok) {
     const txt = await res.text();
     console.error("ADMIN TIMESHEETS ERROR", res.status, txt);
-    tbody.innerHTML = `<tr><td colspan="14" class="empty">Failed to load timesheets</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="15" class="empty">Failed to load timesheets</td></tr>`;
     // also clear badge on error
     updateFinalizedBadge([], from, to, employeeId);
     return;
@@ -466,7 +467,7 @@ async function loadTimesheets() {
   updateFinalizedBadge(data, from, to, employeeId);
 
   if (!Array.isArray(data) || data.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="14" class="empty">No records found</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="15" class="empty">No records found</td></tr>`;
     return;
   }
 
@@ -498,6 +499,21 @@ async function loadTimesheets() {
 
       <td>${remarks}</td>
     `;
+    const deleteCell=document.createElement('td');
+    const deleteButton=document.createElement('button');
+    deleteButton.type='button';deleteButton.textContent='Delete';deleteButton.style.background='#b42318';
+    deleteButton.setAttribute('aria-label',`Delete timesheet for ${r.name} on ${r.work_date}`);
+    deleteButton.onclick=async()=>{
+      if(r.locked){alert('This entry is locked. Unlock the employee’s cutoff before deleting it.');return;}
+      if(!confirm(`Delete the timesheet for ${r.name} on ${r.work_date}?\n\nThis permanently removes this entry. Draft payroll will use the remaining timesheets when recalculated. Finalized payslips stay unchanged.`))return;
+      deleteButton.disabled=true;
+      try{
+        const response=await fetch(`/admin/timesheets/${r.id}`,{method:'DELETE',headers:authHeaders()});
+        const result=await response.json();if(!response.ok)throw new Error(result.error||'Unable to delete entry.');
+        await loadTimesheets();
+      }catch(error){alert(error.message||'Unable to delete entry. Reload to check before retrying.');deleteButton.disabled=false;}
+    };
+    deleteCell.append(deleteButton);tr.append(deleteCell);
     tbody.appendChild(tr);
   });
 }
