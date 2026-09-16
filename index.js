@@ -674,6 +674,8 @@ app.post("/admin/toggle-user", requireAuth, requireAdmin, async (req, res) => {
 
 // Read shifts for a week
 // ✅ optionalAuth so calendar can load even if token missing
+const regularCalendar = process.env.V2_ADVANCES_ENABLED === 'true' ? require('./server/regular-shifts').regularShifts({connectionString:process.env.DATABASE_URL}) : null;
+app.put('/shifts/:id',requireAuth,requireAdmin,(req,res)=>regularCalendar?regularCalendar.edit(req,res):res.status(503).json({error:'V2 calendar is unavailable.'}));
 app.get("/shifts", optionalAuth, async (req, res) => {
   const { week } = req.query;
   if (!week) return res.status(400).json({ error: "Missing week" });
@@ -681,6 +683,7 @@ app.get("/shifts", optionalAuth, async (req, res) => {
   const userId = req.user?.id || null;
 
   try {
+    if(regularCalendar && req.user)await regularCalendar.ensureWeek(week);
     const shifts = await sql`
       SELECT
         s.id,

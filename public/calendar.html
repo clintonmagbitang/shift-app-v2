@@ -108,6 +108,7 @@ th {
 
   <!-- CSV IMPORT (ADMIN ONLY) -->
   <div id="csvImport" style="display:none;margin-bottom:10px;">
+    <p>Daily defaults from September 16, 2026: Barista 8 AM–5 PM (1), 10 AM–7 PM (1), noon–9 PM (2). Kitchen 7 AM–4 PM (1), 8 AM–5 PM (2), noon–9 PM (3). Numbers are available slots. Defaults appear when a week is opened. Existing scheduled days are preserved; edited or deleted defaults stay changed.</p>
     <input type="file" id="csvFile">
     <button onclick="uploadCSV()">Import CSV</button>
   </div>
@@ -234,6 +235,7 @@ async function loadShifts() {
     return;
   }
 
+  if(!res.ok){calendarBody.textContent='Unable to load the calendar. Please try again.';return;}
   const { shifts, dayOffs } = await res.json().catch(() => ({ shifts: [], dayOffs: [] }));
 
   const areas = ["barista", "kitchen"];
@@ -298,10 +300,9 @@ async function loadShifts() {
           div.innerHTML = label;
 
           if (window.user.role === "admin") {
-            // Admin → delete shift
-            div.onclick = () => {
-              if (confirm("Delete this shift?")) deleteShift(s.id);
-            };
+            const edit=document.createElement('button');edit.textContent='Edit';edit.type='button';edit.onclick=()=>editShift(s);
+            const remove=document.createElement('button');remove.textContent='Delete';remove.type='button';remove.onclick=()=>{if(confirm(`Delete ${s.area} shift on ${s.shift_date}, ${s.start_time}–${s.end_time}?`))deleteShift(s.id);};
+            const actions=document.createElement('div');actions.style.marginTop='6px';actions.append(edit,remove);div.append(actions);
           } else if (
             window.user.role === "employee" &&
             s.is_mine === true &&
@@ -378,6 +379,13 @@ async function createShift(date, area) {
   }
 
   loadShifts();
+}
+
+async function editShift(shift){
+  const start=prompt('Start time (HH:MM)',shift.start_time.slice(0,5));if(start===null)return;
+  const end=prompt('End time (HH:MM)',shift.end_time.slice(0,5));if(end===null)return;
+  const slots=prompt('Number of available slots',String(shift.slots));if(slots===null)return;
+  try{const res=await fetch(`/shifts/${shift.id}`,{method:'PUT',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({start_time:start,end_time:end,slots:Number(slots)})});const data=await res.json();if(!res.ok)throw Error(data.error||'Unable to edit shift.');await loadShifts();}catch(e){alert(e.message);}
 }
 
 async function uploadCSV() {
