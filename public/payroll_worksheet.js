@@ -88,6 +88,7 @@ $('references').onchange=()=>document.querySelector('table').classList.toggle('s
 $('cutoff').onchange=()=>{$('message').textContent='Click Load / refresh to open this cutoff. The displayed rows still belong to the previous cutoff.';$('save').disabled=true;$('finalize').disabled=true;};
 window.addEventListener('beforeunload',e=>{if(rows.some(r=>r.dirty)){e.preventDefault();e.returnValue='';}});
 if(window.user?.role==='admin')load();
+$('depositSummary').onclick=async e=>{e.preventDefault();if(await flushDrafts())location.href='/payroll_summary.html?cutoff='+encodeURIComponent(loadedCutoff||$('cutoff').value);};
 let checking=false;
 async function checkUpdates(){
   if(checking || busy || document.hidden || !loadedCutoff || rows.some(r=>r.dirty || r.sync?.dirty) || ['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName))return;

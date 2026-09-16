@@ -1,0 +1,26 @@
+if(window.user?.role!=='admin')location.replace('/dashboard.html');
+const $=id=>document.getElementById(id),money=n=>Number(n||0).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
+let records=[],loaded='',busy=false;
+async function api(path,body){const response=await fetch(path,{headers:authHeaders(body?{'Content-Type':'application/json'}:{}),...(body?{method:'POST',body:JSON.stringify(body)}:{})});const data=await response.json();if(!response.ok)throw new Error(data.error||'Request failed');return data;}
+function cell(tr,text,cls=''){const td=document.createElement('td');td.textContent=text;td.className=cls;tr.append(td);return td;}
+async function load(){
+  if(busy || (records.some(r=>r.dirty)&&!confirm('Discard unconfirmed reference changes and reload?')))return;
+  busy=true;$('load').disabled=true;$('cutoff').disabled=true;loaded=$('cutoff').value;const [from,to]=loaded.split('|');
+  try{records=await api(`/admin/payroll-deposits?from=${from}&to=${to}`);$('rows').replaceChildren();
+    for(const record of records){const tr=document.createElement('tr');$('rows').append(tr);cell(tr,record.name);const bankCell=cell(tr,''),account=cell(tr,'','account');const select=document.createElement('select');select.setAttribute('aria-label',record.name+' bank account');select.add(new Option('Choose bank account',''));
+      for(const bank of record.bank_accounts)select.add(new Option(`${bank.bank_name} · ${bank.account_number}`,String(bank.id)));
+      const confirmed=record.deposit_confirmation;const selected=confirmed?.id || (record.bank_accounts.length===1?record.bank_accounts[0].id:'');select.value=String(selected);bankCell.append(select);
+      const showAccount=()=>{const bank=record.bank_accounts.find(b=>String(b.id)===select.value);account.textContent=bank?.account_number || 'No account selected';};showAccount();
+      cell(tr,'₱'+money(record.net_pay),'amount');const refCell=cell(tr,'','reference'),input=document.createElement('input'),button=document.createElement('button'),status=document.createElement('div');input.value=record.bank_ref||'';input.maxLength=500;input.setAttribute('aria-label',record.name+' deposit reference');button.textContent=confirmed?'Update reference':'Confirm';status.className='status';status.setAttribute('role','status');status.textContent=confirmed?`Confirmed · ${confirmed.reference} · ${confirmed.bank_name} · ${confirmed.account_number}`:(record.bank_accounts.length?'Not confirmed':'Bank details missing — update employee profile.');
+      const dirty=()=>{record.dirty=true;tr.classList.add('dirty');};input.oninput=dirty;select.onchange=()=>{showAccount();dirty();};
+      button.onclick=async()=>{if(busy)return;const reference=input.value.trim();if(!reference||!select.value){status.textContent='Choose a bank account and enter the deposit reference.';return;}if($('cutoff').value!==loaded){status.textContent='Load the selected cutoff first.';return;}
+        busy=true;button.disabled=true;$('load').disabled=true;$('cutoff').disabled=true;input.disabled=true;select.disabled=true;
+        try{const data=await api('/admin/payroll-deposit-confirm',{user_id:record.user_id,from,to,reference,bank_account_id:select.value,expected_revision:record.revision});record.revision=data.revision;record.bank_ref=reference;record.deposit_confirmation=data.deposit_confirmation;record.dirty=false;tr.classList.remove('dirty');status.textContent=`Confirmed · ${reference} · ${data.deposit_confirmation.bank_name} · ${data.deposit_confirmation.account_number}`;button.textContent='Update reference';PayrollSync.notify();}catch(e){status.textContent=e.message;}finally{busy=false;button.disabled=false;$('load').disabled=false;$('cutoff').disabled=false;input.disabled=false;select.disabled=false;}
+      };refCell.append(input,button,status);
+    }$('total').textContent='₱'+money(records.reduce((sum,r)=>sum+Number(r.net_pay||0),0));$('message').textContent=records.length?`${records.length} finalized payrolls · ${from} to ${to}`:'No finalized payroll for this cutoff.';
+  }catch(e){$('rows').replaceChildren();$('total').textContent='—';$('message').textContent=e.message;}finally{busy=false;$('load').disabled=false;$('cutoff').disabled=false;}
+}
+const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`,today=new Date();
+for(let d=new Date(2026,4,1);d<=new Date(today.getFullYear(),today.getMonth()+1,1);d.setMonth(d.getMonth()+1))for(const half of [1,16]){const from=iso(new Date(d.getFullYear(),d.getMonth(),half)),to=iso(new Date(d.getFullYear(),d.getMonth()+(half===16?1:0),half===1?15:0));const option=new Option(`${from} to ${to}`,`${from}|${to}`);$('cutoff').add(option);if(from<=iso(today)&&to>=iso(today))option.selected=true;}
+const requested=new URLSearchParams(location.search).get('cutoff');if(requested&&Array.from($('cutoff').options).some(o=>o.value===requested))$('cutoff').value=requested;
+$('load').onclick=load;$('cutoff').onchange=()=>{$('message').textContent='Click Load summary to view the selected cutoff.';};window.addEventListener('beforeunload',e=>{if(records.some(r=>r.dirty)){e.preventDefault();e.returnValue='';}});if(window.user?.role==='admin')load();

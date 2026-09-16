@@ -19,6 +19,8 @@ The prospective deduction release requires `005_withholding_defaults.sql`. This 
 
 Both payroll pages autosave edited fields through `/admin/payroll-fields`, merging against the latest draft under the same payroll lock. They refresh changed records on tab focus and at eight-second intervals when idle. Finalized records reject autosave. Opening or refreshing a payroll does not create or change a draft. Full finalization still uses a revision check. Defaults-page changes do not update payroll records.
 
+The deposit summary needs no migration. Admins view finalized saved net pay for a cutoff alongside employee bank accounts. Confirmation records the chosen bank account, reference, net pay, timestamp, and administrator in snapshot metadata, retaining prior confirmations in `deposit_history`. It updates only the reference and confirmation metadata under the same payroll lock with a revision check; pay calculations and ledger postings are untouched. The reference is displayed through the existing shared payroll/payslip `bank_ref` field. Confirming a reference does not initiate a bank transfer.
+
 Before changing the live employee portal, reconcile any V1 attendance or employee changes made since the V2 database branch was created. V1 and V2 do not synchronize automatically. Keep the V2 opening balances and payroll records when planning that transition.
 
 Existing uploaded payslip files live on disk, outside PostgreSQL. A new service does not automatically inherit V1's uploaded files. Durable upload storage must be configured if using file uploads in the hosted V2 service.

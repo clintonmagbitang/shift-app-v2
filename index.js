@@ -2316,6 +2316,8 @@ app.get('/api/v2/my-payroll-history', requireAuth, (req,res) => payrollV2 ? payr
 app.post('/admin/payroll-draft', requireAuth, requireAdmin, (req,res) => payrollV2 ? payrollV2.save(req,res,false) : res.status(503).json({error:'V2 payroll is unavailable.'}));
 app.post('/admin/payroll-fields', requireAuth, requireAdmin, (req,res) => payrollV2 ? payrollV2.save(req,res,false,true) : res.status(503).json({error:'V2 payroll is unavailable.'}));
 app.get('/admin/payroll-revisions', requireAuth, requireAdmin, (req,res) => payrollV2 ? payrollV2.revisions(req,res) : res.status(503).json({error:'V2 payroll is unavailable.'}));
+app.get('/admin/payroll-deposits', requireAuth, requireAdmin, (req,res) => payrollV2 ? payrollV2.depositSummary(req,res) : res.status(503).json({error:'V2 payroll is unavailable.'}));
+app.post('/admin/payroll-deposit-confirm', requireAuth, requireAdmin, (req,res) => payrollV2 ? payrollV2.confirmDeposit(req,res) : res.status(503).json({error:'V2 payroll is unavailable.'}));
 
 app.post("/admin/payroll-finalize", requireAuth, requireAdmin, async (req, res) => {
   if (payrollV2) return payrollV2.save(req,res);

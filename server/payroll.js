@@ -131,6 +131,7 @@ function createPayroll({ connectionString, compute, pool = new Pool({ connection
       const result=await pool.query('SELECT user_id,updated_at::text AS revision FROM payroll_records_v2 WHERE cutoff_from=$1 AND cutoff_to=$2',[ctx.from,ctx.to]);res.json(result.rows);
     } catch {res.status(400).json({error:'Unable to check payroll updates.'});}
   }
-  return { preview, save, unlock, history, revisions };
+  const deposits=require('./payroll-deposits').createDeposits({pool,context});
+  return { preview, save, unlock, history, revisions, depositSummary:deposits.summary, confirmDeposit:deposits.confirm };
 }
 module.exports = { createPayroll, context, adjustments };
